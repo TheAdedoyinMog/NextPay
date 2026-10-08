@@ -114,6 +114,23 @@ class Money:
         share, leftover = divmod(self.cents, n)
         return (Money(share),) * (n - 1) + (Money(share + leftover),)
 
+    def prorate(self, part: int, whole: int) -> Money:
+        """This amount scaled by ``part / whole``, rounded up to the next cent.
+
+        Rounding up means a prorated need is never underfunded; the overshoot is
+        under one cent. ``Money(20000).prorate(10, 14)`` is $142.86.
+
+        Raises ``ValueError`` if the amount is negative, ``part`` is not an int >= 0,
+        or ``whole`` is not an int >= 1.
+        """
+        if type(part) is not int or part < 0:
+            raise ValueError(f"prorate needs an int part >= 0, got {part!r}")
+        if type(whole) is not int or whole < 1:
+            raise ValueError(f"prorate needs an int whole >= 1, got {whole!r}")
+        if self.cents < 0:
+            raise ValueError(f"cannot prorate a negative amount: {self}")
+        return Money(-(-self.cents * part // whole))  # ceiling division
+
     def __str__(self) -> str:
         """Format for tests and debugging, e.g. ``-$1,234.56``. The app formats its own."""
         sign = "-" if self.cents < 0 else ""

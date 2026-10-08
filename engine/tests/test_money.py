@@ -246,3 +246,33 @@ def test_split_rejects_negative_amount() -> None:
 def test_split_rejects_invalid_n(n: object) -> None:
     with pytest.raises(ValueError):
         Money(100).split(n)  # type: ignore[arg-type]
+
+
+# --- Prorate ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("cents", "part", "whole", "expected"),
+    [
+        (20000, 14, 14, 20000),  # whole period: exact, no rounding
+        (20000, 10, 14, 14286),  # 14285.71... rounds up
+        (20000, 7, 14, 10000),
+        (20000, 0, 14, 0),
+        (20000, 28, 14, 40000),  # part may exceed whole
+        (1, 1, 3, 1),  # a third of a cent rounds up to a cent
+        (0, 5, 7, 0),
+    ],
+)
+def test_prorate_rounds_up(cents: int, part: int, whole: int, expected: int) -> None:
+    assert Money(cents).prorate(part, whole) == Money(expected)
+
+
+@pytest.mark.parametrize(("part", "whole"), [(-1, 14), (1, 0), (1, -14), (True, 14), (1, 14.0)])
+def test_prorate_rejects_bad_ratio(part: object, whole: object) -> None:
+    with pytest.raises(ValueError):
+        Money(100).prorate(part, whole)  # type: ignore[arg-type]
+
+
+def test_prorate_rejects_negative_amount() -> None:
+    with pytest.raises(ValueError):
+        Money(-100).prorate(1, 2)

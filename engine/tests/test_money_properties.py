@@ -70,3 +70,16 @@ def test_parse_round_trips_plain_decimal(money: Money) -> None:
 @given(moneys)
 def test_str_round_trips_after_removing_symbols(money: Money) -> None:
     assert Money.parse(str(money).replace("$", "").replace(",", "")) == money
+
+
+@given(
+    non_negative_moneys,
+    st.integers(min_value=0, max_value=1000),
+    st.integers(min_value=1, max_value=1000),
+)
+def test_prorate_is_the_exact_share_rounded_up(money: Money, part: int, whole: int) -> None:
+    result = money.prorate(part, whole).cents
+    exact_times_whole = money.cents * part
+    # result is the smallest cent amount that is at least the exact share.
+    assert result * whole >= exact_times_whole
+    assert (result - 1) * whole < exact_times_whole or result == 0
