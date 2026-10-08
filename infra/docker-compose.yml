@@ -1,0 +1,23 @@
+# Local development database (ADR 0007). The API runs on the host and connects
+# on localhost:5432; see the repository README.
+name: nextpay
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: nextpay
+      POSTGRES_PASSWORD: nextpay  # local development only
+      POSTGRES_DB: nextpay
+    ports:
+      - "${NEXTPAY_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nextpay -d nextpay"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  postgres-data:
