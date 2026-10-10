@@ -6,10 +6,17 @@ requires-python = ">=3.12"
 dependencies = [
     "nextpay-engine",
     "fastapi>=0.115",
+    # The `fastapi dev` / `fastapi run` commands. Chosen over fastapi[standard], which
+    # also installs fastapi-cloud-cli (with sentry-sdk) and OpenTelemetry exporters.
+    "fastapi-cli>=0.0.32",
+    "uvicorn[standard]>=0.30",
     "sqlalchemy>=2.0.36",
     "alembic>=1.14",
     "psycopg[binary]>=3.2",
     "pydantic-settings>=2.6",
+    "argon2-cffi>=23.1",
+    "pyjwt>=2.10",
+    "email-validator>=2.2",
 ]
 
 [build-system]

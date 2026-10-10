@@ -15,7 +15,7 @@ from alembic.config import Config
 from sqlalchemy import URL, Connection, Engine, create_engine, make_url, text
 from sqlalchemy.orm import Session
 
-ALEMBIC_INI = Path(__file__).resolve().parents[2] / "alembic.ini"
+ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 
 
 @pytest.fixture(scope="session")

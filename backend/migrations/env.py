@@ -1,6 +1,7 @@
 """Alembic environment: migrates the database named by the settings.
 
-A caller may set ``sqlalchemy.url`` on the Alembic config instead (the tests
+It reads only the database settings, so migrating never needs the API's
+secrets. A caller may set ``sqlalchemy.url`` on the Alembic config instead (the tests
 do, to migrate a scratch database); that takes precedence.
 """
 
@@ -10,7 +11,7 @@ from alembic import context
 from sqlalchemy import create_engine
 
 import app.models  # noqa: F401  # registers every table on Base.metadata
-from app.core.config import get_settings
+from app.core.config import get_database_settings
 from app.db.base import Base
 
 config = context.config
@@ -21,7 +22,8 @@ target_metadata = Base.metadata
 
 
 def _database_url() -> str:
-    return config.get_main_option("sqlalchemy.url") or str(get_settings().database_url)
+    url = config.get_main_option("sqlalchemy.url")
+    return url or str(get_database_settings().database_url)
 
 
 def run_migrations_offline() -> None:

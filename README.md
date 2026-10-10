@@ -24,7 +24,7 @@ uv run ruff format            # format
 uv run mypy                   # strict type check
 uv run lint-imports           # enforce the engine boundary
 uv run pre-commit install     # run the checks automatically on every commit
-uv run fastapi dev backend/app/main.py   # start the API (needs fastapi[standard])
+uv run fastapi dev backend/app/main.py   # start the API with auto-reload (needs the database below)
 ```
 
 ### Local database
@@ -39,6 +39,9 @@ uv run alembic -c backend/alembic.ini revision --autogenerate -m "describe chang
 uv run alembic -c backend/alembic.ini check                # fails if models and migrations differ
 docker compose -f infra/docker-compose.yml down            # stop (add -v to delete the data)
 ```
+
+The API also needs `NEXTPAY_JWT_SECRET` (any 32+ characters locally; `.env.example` has
+one). Migrations don't: they read only the database settings. Auth design: ADR 0009.
 
 Database tests use `NEXTPAY_TEST_DATABASE_URL`, a database they drop and recreate,
 and are skipped when it is unset. CI always runs them.
