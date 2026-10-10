@@ -46,6 +46,19 @@ one). Migrations don't: they read only the database settings. Auth design: ADR 0
 Database tests use `NEXTPAY_TEST_DATABASE_URL`, a database they drop and recreate,
 and are skipped when it is unset. CI always runs them.
 
+### The API
+
+With the API running, the interactive docs are at `http://localhost:8000/docs`. Sign in
+with `/auth/register` or `/auth/login`, then send the access token as a Bearer token.
+
+| Resource | Routes |
+|---|---|
+| `/income-sources`, `/bills`, `/essential-expenses`, `/debts`, `/goals` | `POST`, `GET`, `GET /{id}`, `PUT /{id}`, `DELETE /{id}` |
+| `/balance-snapshots` | `POST`, `GET` (append-only) |
+
+Money is integer cents. `PUT` replaces the whole resource, so every field is required and
+a nullable one must be sent as `null`. Conventions and delete rules: ADR 0010.
+
 ## Ground rules
 
 1. All financial math lives in `engine/`. Never in the backend routes, never in the app.

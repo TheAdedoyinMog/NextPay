@@ -30,6 +30,38 @@ class EmailUnavailableError(DomainError):
     message = "This email can't be used to create an account."
 
 
+class NotFoundError(DomainError):
+    """No such resource for this user.
+
+    Another user's resource raises exactly this, so a response never says
+    whether an id exists (ADR 0006).
+    """
+
+    code = "not_found"
+    message = "Not found."
+
+
+class ConflictError(DomainError):
+    """The request is valid, but the data as it stands does not allow it."""
+
+    code = "conflict"
+    message = "This can't be done right now."
+
+
+class IncomeSourceInUseError(ConflictError):
+    """Paychecks and their plans are history, and they belong to this source (ADR 0010)."""
+
+    code = "income_source_in_use"
+    message = "This income source has paychecks recorded, so it can't be deleted."
+
+
+class EmergencyGoalExistsError(ConflictError):
+    """The planner funds one emergency fund; a second would be ambiguous."""
+
+    code = "emergency_goal_exists"
+    message = "You already have an emergency fund goal. Change that one instead."
+
+
 # --- Authentication: all of these mean "who you are could not be established" ---
 
 

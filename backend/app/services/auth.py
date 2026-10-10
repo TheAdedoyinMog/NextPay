@@ -34,6 +34,7 @@ from app.core.security import (
     new_refresh_token,
 )
 from app.models import RefreshToken, User
+from app.services.protocols import Transaction
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +49,6 @@ class RefreshTokenStore(Protocol):
     def get_by_hash_for_update(self, token_hash: str) -> RefreshToken | None: ...
     def add(self, token: RefreshToken) -> RefreshToken: ...
     def revoke_family(self, user_id: uuid.UUID, family_id: uuid.UUID, at: datetime) -> int: ...
-
-
-class Transaction(Protocol):
-    """What the service needs to end a unit of work. A SQLAlchemy Session is one."""
-
-    def commit(self) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)

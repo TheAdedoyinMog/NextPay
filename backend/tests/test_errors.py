@@ -6,7 +6,13 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from app.api.errors import install_error_handlers
-from app.core.errors import DomainError, EmailUnavailableError, InvalidInputError
+from app.core.errors import (
+    ConflictError,
+    DomainError,
+    EmailUnavailableError,
+    InvalidInputError,
+    NotFoundError,
+)
 from app.main import app
 
 
@@ -30,6 +36,8 @@ def client() -> TestClient:
             "unmapped": _UnmappedError(),
             "invalid": InvalidInputError("Pick a shorter name."),
             "taken": EmailUnavailableError(),
+            "missing": NotFoundError(),
+            "conflict": ConflictError("That would break something."),
         }
         raise errors[kind]
 
@@ -45,6 +53,8 @@ def client() -> TestClient:
     [
         ("invalid", 422, "invalid_input", "Pick a shorter name."),
         ("taken", 409, "email_unavailable", "This email can't be used to create an account."),
+        ("missing", 404, "not_found", "Not found."),
+        ("conflict", 409, "conflict", "That would break something."),
         ("unmapped", 400, "unmapped", "No status was chosen for this."),
     ],
 )

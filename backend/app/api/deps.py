@@ -18,8 +18,23 @@ from app.core.errors import AuthenticationError
 from app.core.security import AccessTokenCodec, PasswordHasher
 from app.db.session import get_session
 from app.models import User
-from app.repositories import RefreshTokenRepository, UserRepository
+from app.repositories import (
+    BalanceSnapshotRepository,
+    BillRepository,
+    DebtRepository,
+    EssentialExpenseRepository,
+    GoalRepository,
+    IncomeSourceRepository,
+    RefreshTokenRepository,
+    UserRepository,
+)
 from app.services.auth import AuthService
+from app.services.balances import BalanceSnapshotService
+from app.services.bills import BillService
+from app.services.debts import DebtService
+from app.services.essential_expenses import EssentialExpenseService
+from app.services.goals import GoalService
+from app.services.income_sources import IncomeSourceService
 
 
 def get_clock() -> Clock:
@@ -68,3 +83,46 @@ def get_current_user(
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+SessionDep = Annotated[Session, Depends(get_session)]
+
+
+def get_income_source_service(session: SessionDep) -> IncomeSourceService:
+    return IncomeSourceService(income_sources=IncomeSourceRepository(session), transaction=session)
+
+
+def get_bill_service(session: SessionDep) -> BillService:
+    return BillService(bills=BillRepository(session), transaction=session)
+
+
+def get_essential_expense_service(session: SessionDep) -> EssentialExpenseService:
+    return EssentialExpenseService(
+        essentials=EssentialExpenseRepository(session), transaction=session
+    )
+
+
+def get_debt_service(session: SessionDep) -> DebtService:
+    return DebtService(debts=DebtRepository(session), transaction=session)
+
+
+def get_goal_service(session: SessionDep) -> GoalService:
+    return GoalService(goals=GoalRepository(session), transaction=session)
+
+
+def get_balance_snapshot_service(
+    session: SessionDep, clock: Annotated[Clock, Depends(get_clock)]
+) -> BalanceSnapshotService:
+    return BalanceSnapshotService(
+        snapshots=BalanceSnapshotRepository(session), transaction=session, clock=clock
+    )
+
+
+IncomeSourceServiceDep = Annotated[IncomeSourceService, Depends(get_income_source_service)]
+BillServiceDep = Annotated[BillService, Depends(get_bill_service)]
+EssentialExpenseServiceDep = Annotated[
+    EssentialExpenseService, Depends(get_essential_expense_service)
+]
+DebtServiceDep = Annotated[DebtService, Depends(get_debt_service)]
+GoalServiceDep = Annotated[GoalService, Depends(get_goal_service)]
+BalanceSnapshotServiceDep = Annotated[BalanceSnapshotService, Depends(get_balance_snapshot_service)]

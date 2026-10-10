@@ -7,6 +7,7 @@ reshaped into the same envelope, so clients parse a single error format.
 
 import logging
 from collections.abc import Mapping
+from typing import Any
 
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -15,9 +16,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.errors import (
     AuthenticationError,
+    ConflictError,
     DomainError,
     EmailUnavailableError,
     InvalidInputError,
+    NotFoundError,
 )
 from app.schemas.errors import ErrorBody, ErrorResponse
 
@@ -26,9 +29,16 @@ logger = logging.getLogger(__name__)
 # Looked up along each error's class hierarchy, most specific first.
 _STATUS_BY_ERROR: dict[type[DomainError], int] = {
     AuthenticationError: status.HTTP_401_UNAUTHORIZED,
+    NotFoundError: status.HTTP_404_NOT_FOUND,
+    ConflictError: status.HTTP_409_CONFLICT,
     EmailUnavailableError: status.HTTP_409_CONFLICT,
     InvalidInputError: status.HTTP_422_UNPROCESSABLE_CONTENT,
 }
+
+
+def error_responses(*codes: int) -> dict[int | str, dict[str, Any]]:
+    """OpenAPI ``responses`` for a route: each status code returns the error envelope."""
+    return {code: {"model": ErrorResponse} for code in codes}
 
 
 def status_for(error: DomainError) -> int:
