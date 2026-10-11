@@ -1,10 +1,13 @@
-"""Essential expenses and debts."""
+"""Essential expenses, debts, and the payments recorded against debts."""
 
-from sqlalchemy import CheckConstraint, String
+import uuid
+from datetime import date
+
+from sqlalchemy import CheckConstraint, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models.columns import Cents, TimestampsMixin, UserOwnedMixin, owned_by_user
+from app.models.columns import Cents, TimestampsMixin, UserOwnedMixin, owned_by_user, tenant_fk
 
 
 class EssentialExpense(UserOwnedMixin, TimestampsMixin, Base):
@@ -40,3 +43,19 @@ class Debt(UserOwnedMixin, TimestampsMixin, Base):
     apr_bps: Mapped[int]
     minimum_payment_cents: Mapped[Cents]
     due_day: Mapped[int]
+
+
+class DebtPayment(UserOwnedMixin, TimestampsMixin, Base):
+    """A payment toward a debt; it draws the debt's reserve and its balance down."""
+
+    __tablename__ = "debt_payments"
+    __table_args__ = (
+        owned_by_user(),
+        tenant_fk("debt_id", "debts", ondelete="CASCADE"),
+        Index("ix_debt_payments_debt_id_paid_on", "debt_id", "paid_on"),
+        CheckConstraint("amount_cents > 0", name="amount_positive"),
+    )
+
+    debt_id: Mapped[uuid.UUID]
+    paid_on: Mapped[date]
+    amount_cents: Mapped[Cents]

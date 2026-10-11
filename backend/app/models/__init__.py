@@ -9,7 +9,7 @@ from app.models.goals import Goal
 from app.models.income import IncomeSource, Paycheck, PayFrequency
 from app.models.plans import Allocation, GoalProjection, PaycheckPlan, PlanStatus
 from app.models.reserves import Reserve
-from app.models.spending import Debt, EssentialExpense
+from app.models.spending import Debt, DebtPayment, EssentialExpense
 from app.models.user import RefreshToken, User
 
 __all__ = [
@@ -18,6 +18,7 @@ __all__ = [
     "Bill",
     "BillPayment",
     "Debt",
+    "DebtPayment",
     "EssentialExpense",
     "Goal",
     "GoalProjection",

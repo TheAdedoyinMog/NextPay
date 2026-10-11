@@ -1,15 +1,17 @@
 """Income sources: create, list, get, update, delete, each for one user (ADR 0005).
 
-An income source that has paychecks cannot be deleted: paychecks and their
-plans are history. Archiving a source the user no longer has is planned for
-2D, when paychecks can first exist (ADR 0010).
+Paychecks and their plans are history, so a source that has paychecks is
+archived when the user deletes it: it stops paying and can no longer be read
+or planned for, but its history stays (ADR 0011).
 """
 
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
+from typing import Protocol
 
+from app.core.clock import Clock
 from app.core.errors import InvalidInputError, NotFoundError
 from app.models import IncomeSource, PayFrequency
 from app.services.engine_mapping import to_engine_income_source, to_engine_schedule, validated
@@ -39,12 +41,19 @@ class IncomeSourceInput:
     second_day_of_month: int | None = None
 
 
+class IncomeSourceStore(OwnedStore[IncomeSource], Protocol):
+    """``get`` and ``list_for`` never return an archived source."""
+
+    def delete_or_archive(self, row: IncomeSource, at: datetime) -> bool: ...
+
+
 class IncomeSourceService:
     def __init__(
-        self, *, income_sources: OwnedStore[IncomeSource], transaction: Transaction
+        self, *, income_sources: IncomeSourceStore, transaction: Transaction, clock: Clock
     ) -> None:
         self._income_sources = income_sources
         self._transaction = transaction
+        self._clock = clock
 
     def create(self, user_id: uuid.UUID, data: IncomeSourceInput) -> IncomeSource:
         """Raises ``InvalidInputError``."""
@@ -78,8 +87,11 @@ class IncomeSourceService:
         return source
 
     def delete(self, user_id: uuid.UUID, source_id: uuid.UUID) -> None:
-        """Raises ``NotFoundError``, or ``IncomeSourceInUseError`` if it has paychecks."""
-        self._income_sources.delete(self.get(user_id, source_id))
+        """Remove the source: deleted if it has no paychecks, archived if it has.
+
+        Either way it is gone from this service afterwards. Raises ``NotFoundError``.
+        """
+        self._income_sources.delete_or_archive(self.get(user_id, source_id), self._clock())
         self._transaction.commit()
 
 

@@ -43,3 +43,13 @@ DayOfMonth = Annotated[
 # 1 is the most important.
 Priority = Annotated[int, Field(strict=True, ge=1, le=MAX_PRIORITY)]
 IsoDate = Annotated[date, BeforeValidator(_require_date_string)]
+# On bill, debt, and goal responses. Read-only: plans and payments change it.
+ReservedCents = Annotated[
+    int,
+    Field(
+        description=(
+            "Money set aside for this by committed plans and not yet paid out or released "
+            "(ADR 0003). Read-only."
+        )
+    ),
+]

@@ -48,11 +48,23 @@ class ConflictError(DomainError):
     message = "This can't be done right now."
 
 
-class IncomeSourceInUseError(ConflictError):
-    """Paychecks and their plans are history, and they belong to this source (ADR 0010)."""
+class PaycheckAlreadyCommittedError(ConflictError):
+    """A committed plan is final: its paycheck cannot be planned again (ADR 0011)."""
 
-    code = "income_source_in_use"
-    message = "This income source has paychecks recorded, so it can't be deleted."
+    code = "paycheck_already_committed"
+    message = "This paycheck already has a committed plan."
+
+
+class PlanOutOfDateError(ConflictError):
+    """Something the plan was built from has changed since, so it must be made again."""
+
+    code = "plan_out_of_date"
+    message = "Your details have changed since this plan was made. Generate a new plan."
+
+
+class PlanSupersededError(ConflictError):
+    code = "plan_superseded"
+    message = "A newer plan replaced this one. Commit the newer plan."
 
 
 class EmergencyGoalExistsError(ConflictError):

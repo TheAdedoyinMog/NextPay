@@ -1,4 +1,4 @@
-"""/income-sources: the signed-in user's jobs and other regular income (ADR 0005, ADR 0010)."""
+"""/income-sources: the signed-in user's jobs and other regular income (ADR 0005, 0010, 0011)."""
 
 import uuid
 
@@ -70,11 +70,11 @@ def replace_income_source(
 @router.delete(
     "/{income_source_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    responses=error_responses(401, 404, 409, 422),
+    responses=error_responses(401, 404, 422),
     summary="Delete an income source",
     description=(
-        "Refused with 409 `income_source_in_use` once the source has paychecks: "
-        "paychecks and their plans are history."
+        "A source that has paychecks is archived instead of deleted: it stops paying and "
+        "can no longer be read or planned for, but its paychecks and plans stay as history."
     ),
 )
 def delete_income_source(

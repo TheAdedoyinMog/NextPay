@@ -5,15 +5,17 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.errors import EmergencyGoalExistsError, IncomeSourceInUseError
+from app.core.errors import EmergencyGoalExistsError
 from app.models import BalanceSnapshot, Goal, IncomeSource, Paycheck, PayFrequency, User
 from app.repositories import (
     BalanceSnapshotRepository,
     GoalRepository,
     IncomeSourceRepository,
+    PaycheckRepository,
     UserRepository,
 )
 from nextpay_engine import GoalKind
@@ -36,6 +38,15 @@ def make_source(user: User, name: str = "Day job") -> IncomeSource:
     )
 
 
+def make_paycheck(source: IncomeSource, pay_date: date) -> Paycheck:
+    return Paycheck(
+        user_id=source.user_id,
+        income_source_id=source.id,
+        pay_date=pay_date,
+        expected_amount_cents=150_000,
+    )
+
+
 def make_goal(user: User, name: str = "Camera", kind: GoalKind = GoalKind.PURCHASE) -> Goal:
     return Goal(
         user_id=user.id, name=name, kind=kind, target_cents=200_000, current_cents=0, priority=2
@@ -49,16 +60,21 @@ def test_a_source_without_paychecks_is_deleted(db_session: Session) -> None:
     ada, _ = two_users(db_session)
     sources = IncomeSourceRepository(db_session)
     job = sources.add(make_source(ada))
-    sources.delete(job)
+
+    assert sources.delete_or_archive(job, NOW) is False
+
     assert sources.list_for(ada.id) == []
+    assert sources.get_including_archived(ada.id, job.id) is None
+    assert db_session.scalar(select(func.count()).select_from(IncomeSource)) == 0
 
 
-def test_a_source_with_paychecks_is_kept_and_the_transaction_survives(
+def test_a_source_with_paychecks_is_archived_and_the_transaction_survives(
     db_session: Session,
 ) -> None:
-    ada, _ = two_users(db_session)
+    ada, bob = two_users(db_session)
     sources = IncomeSourceRepository(db_session)
     job = sources.add(make_source(ada))
+    side_job = sources.add(make_source(ada, "Side job"))
     db_session.add(
         Paycheck(
             user_id=ada.id,
@@ -69,14 +85,66 @@ def test_a_source_with_paychecks_is_kept_and_the_transaction_survives(
     )
     db_session.flush()
 
-    with pytest.raises(IncomeSourceInUseError):
-        sources.delete(job)
+    assert sources.delete_or_archive(job, NOW) is True
 
-    # Only the savepoint was rolled back; the source and the session are intact.
-    assert sources.get(ada.id, job.id) is job
-    side_job = sources.add(make_source(ada, "Side job"))
-    sources.delete(side_job)
+    # Only the savepoint was rolled back: the row and its paycheck are kept...
+    assert job.archived_at == NOW
+    assert db_session.scalar(select(func.count()).select_from(Paycheck)) == 1
+    # ...but the ordinary reads no longer show it.
+    assert sources.get(ada.id, job.id) is None
+    assert sources.list_for(ada.id) == [side_job]
+    # History can still find it, and only for its owner.
+    assert sources.get_including_archived(ada.id, job.id) is job
+    assert sources.get_including_archived(bob.id, job.id) is None
+    # The session is still usable.
+    assert sources.delete_or_archive(side_job, NOW) is False
+
+
+def test_every_source_archived_or_not_can_be_listed_for_history(db_session: Session) -> None:
+    ada, bob = two_users(db_session)
+    sources = IncomeSourceRepository(db_session)
+    job = sources.add(make_source(ada))
+    old_job = sources.add(make_source(ada, "Old job"))
+    old_job.archived_at = NOW
+    sources.add(make_source(bob, "Bob's job"))
+
+    assert set(sources.list_including_archived(ada.id)) == {job, old_job}
     assert sources.list_for(ada.id) == [job]
+
+
+# --- paychecks and the user lock -----------------------------------------------
+
+
+def test_a_paycheck_is_found_by_source_and_date_for_its_owner_only(db_session: Session) -> None:
+    ada, bob = two_users(db_session)
+    job = IncomeSourceRepository(db_session).add(make_source(ada))
+    paychecks = PaycheckRepository(db_session)
+    first = paychecks.add(make_paycheck(job, date(2026, 10, 2)))
+    second = paychecks.add(make_paycheck(job, date(2026, 10, 16)))
+    third = paychecks.add(make_paycheck(job, date(2026, 10, 30)))
+
+    assert paychecks.find(ada.id, job.id, date(2026, 10, 16)) is second
+    assert paychecks.find(ada.id, job.id, date(2026, 10, 17)) is None
+    assert paychecks.find(ada.id, uuid.uuid4(), date(2026, 10, 16)) is None
+    assert paychecks.find(bob.id, job.id, date(2026, 10, 16)) is None
+
+    assert paychecks.list_between(ada.id, date(2026, 10, 2), date(2026, 10, 16)) == [first, second]
+    assert paychecks.list_between(ada.id, date(2026, 10, 17), date(2026, 12, 1)) == [third]
+    assert paychecks.list_between(bob.id, date(2026, 1, 1), date(2026, 12, 31)) == []
+
+
+def test_locking_a_user_takes_a_row_lock_and_tolerates_a_missing_user(
+    db_session: Session,
+) -> None:
+    ada, _ = two_users(db_session)
+    users = UserRepository(db_session)
+    users.lock(ada.id)
+    users.lock(ada.id)  # already held by this transaction: no wait
+    users.lock(uuid.uuid4())  # nothing to lock, nothing to wait for
+    locked = db_session.execute(
+        text("SELECT count(*) FROM pg_locks WHERE locktype = 'transactionid' AND granted")
+    ).scalar_one()
+    assert locked >= 1
 
 
 # --- goals ---------------------------------------------------------------------

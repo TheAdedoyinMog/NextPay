@@ -7,7 +7,7 @@ from typing import Annotated
 from pydantic import BaseModel, Field
 
 from app.core.limits import MAX_APR_BPS
-from app.schemas.common import DayOfMonth, Name, NonNegativeCents, RequestModel
+from app.schemas.common import DayOfMonth, Name, NonNegativeCents, RequestModel, ReservedCents
 
 
 class DebtRequest(RequestModel):
@@ -35,6 +35,7 @@ class DebtResponse(BaseModel):
     apr_bps: int
     minimum_payment_cents: int
     due_day: int
+    reserved_cents: ReservedCents
     created_at: datetime
     updated_at: datetime
 

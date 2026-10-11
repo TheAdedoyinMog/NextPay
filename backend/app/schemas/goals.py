@@ -13,6 +13,7 @@ from app.schemas.common import (
     PositiveCents,
     Priority,
     RequestModel,
+    ReservedCents,
 )
 from nextpay_engine import GoalKind
 
@@ -38,6 +39,7 @@ class GoalResponse(BaseModel):
     current_cents: int
     priority: int
     deadline: date | None
+    reserved_cents: ReservedCents
     created_at: datetime
     updated_at: datetime
 

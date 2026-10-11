@@ -8,8 +8,9 @@ from typing import Any
 import pytest
 
 from app.core.errors import EmergencyGoalExistsError, InvalidInputError, NotFoundError
+from app.models import Reserve
 from app.services.goals import GoalInput, GoalService
-from nextpay_engine import GoalKind
+from nextpay_engine import GoalKind, ReserveKind
 
 ADA = uuid.uuid4()
 BOB = uuid.uuid4()
@@ -150,6 +151,61 @@ def test_update_replaces_every_field(goal_service: GoalService, transaction: Fak
     assert (camera.target_cents, camera.current_cents) == (500_000, 40_000)
     assert (camera.priority, camera.deadline) == (1, None)
     assert transaction.commits == 2
+
+
+def set_aside(reserves: Fake, goal: Any, cents: int) -> Reserve:
+    reserve: Reserve = reserves.add(
+        Reserve(
+            id=uuid.uuid4(),
+            user_id=goal.user_id,
+            kind=ReserveKind.GOAL,
+            goal_id=goal.id,
+            amount_cents=cents,
+        )
+    )
+    return reserve
+
+
+@pytest.mark.parametrize(
+    ("saved", "reserve_left"),
+    [
+        (10_000, 10_000),  # $300 taken back out: the reserve follows it down
+        (0, 0),
+        (40_000, 40_000),  # unchanged
+        (90_000, 40_000),  # saved more elsewhere: nothing more is set aside
+    ],
+)
+def test_a_goal_never_has_more_set_aside_than_it_has_saved(
+    goal_service: GoalService, reserves: Fake, user_lock: Fake, saved: int, reserve_left: int
+) -> None:
+    camera = goal_service.create(ADA, replace(CAMERA, current_cents=40_000))
+    other = goal_service.create(ADA, replace(CAMERA, name="Trip", current_cents=40_000))
+    reserve = set_aside(reserves, camera, 40_000)
+    untouched = set_aside(reserves, other, 40_000)
+
+    goal_service.update(ADA, camera.id, replace(CAMERA, current_cents=saved))
+
+    assert (camera.current_cents, reserve.amount_cents) == (saved, reserve_left)
+    assert untouched.amount_cents == 40_000
+    assert user_lock.locked == [ADA]
+
+
+def test_updating_a_goal_with_nothing_set_aside_reserves_nothing(
+    goal_service: GoalService, reserves: Fake
+) -> None:
+    camera = goal_service.create(ADA, CAMERA)
+    goal_service.update(ADA, camera.id, replace(CAMERA, current_cents=50_000))
+    assert reserves.rows == {}
+
+
+def test_a_rejected_update_leaves_the_reserve_alone(
+    goal_service: GoalService, reserves: Fake
+) -> None:
+    camera = goal_service.create(ADA, replace(CAMERA, current_cents=40_000))
+    reserve = set_aside(reserves, camera, 40_000)
+    with pytest.raises(InvalidInputError):
+        goal_service.update(ADA, camera.id, replace(CAMERA, current_cents=0, target_cents=0))
+    assert reserve.amount_cents == 40_000
 
 
 def test_a_rejected_update_leaves_the_goal_untouched(

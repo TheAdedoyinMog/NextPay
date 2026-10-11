@@ -138,6 +138,82 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
         metafunc.parametrize("item_resource", with_items, ids=lambda r: r.path)
 
 
+def _create(client: TestClient, headers: dict[str, str], path: str, body: Any) -> dict[str, Any]:
+    response = client.post(path, json=body, headers=headers)
+    assert response.status_code == 201, response.text
+    return dict(response.json())
+
+
+@pytest.fixture
+def worked_example(client: TestClient) -> Callable[[dict[str, str]], dict[str, dict[str, Any]]]:
+    """Sets up the design doc's worked example for a user, through the API.
+
+    $1,500 every two weeks from Friday, Oct 2, 2026; $800 rent due Oct 20, monthly;
+    $200 of groceries a period; a $150 car minimum due the 20th; and a $2,000
+    camera, 30 paychecks away. The first paycheck plans to $758.33 Safe to Spend.
+    Returns what was created, by name.
+    """
+
+    def build(headers: dict[str, str]) -> dict[str, dict[str, Any]]:
+        return {
+            "job": _create(
+                client,
+                headers,
+                "/income-sources",
+                {
+                    "name": "Day job",
+                    "expected_amount_cents": 150_000,
+                    "schedule": {"type": "biweekly", "anchor_date": "2026-10-02"},
+                },
+            ),
+            "rent": _create(
+                client,
+                headers,
+                "/bills",
+                {
+                    "name": "Rent",
+                    "amount_cents": 80_000,
+                    "priority": 1,
+                    "first_due_date": "2026-10-20",
+                    "repeat_every_months": 1,
+                },
+            ),
+            "groceries": _create(
+                client,
+                headers,
+                "/essential-expenses",
+                {"name": "Groceries", "amount_per_period_cents": 20_000},
+            ),
+            "car": _create(
+                client,
+                headers,
+                "/debts",
+                {
+                    "name": "Car loan",
+                    "balance_cents": 900_000,
+                    "apr_bps": 699,
+                    "minimum_payment_cents": 15_000,
+                    "due_day": 20,
+                },
+            ),
+            "camera": _create(
+                client,
+                headers,
+                "/goals",
+                {
+                    "name": "Camera",
+                    "kind": "purchase",
+                    "target_cents": 200_000,
+                    "current_cents": 0,
+                    "priority": 2,
+                    "deadline": "2027-11-20",
+                },
+            ),
+        }
+
+    return build
+
+
 @pytest.fixture
 def ada(sign_up: Callable[[str], dict[str, str]]) -> dict[str, str]:
     return sign_up("ada@example.com")

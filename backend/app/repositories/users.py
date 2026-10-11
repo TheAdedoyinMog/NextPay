@@ -25,6 +25,14 @@ class UserRepository:
         to scope by, since this is how a user is found before signing in."""
         return self._session.scalar(select(User).where(User.email == email))
 
+    def lock(self, user_id: uuid.UUID) -> None:
+        """Hold ``user_id``'s row lock until the transaction ends.
+
+        Planning writes (plans, commits, payments, paychecks) take it first, so
+        two requests from one user run one after the other, never interleaved.
+        """
+        self._session.execute(select(User.id).where(User.id == user_id).with_for_update())
+
     def add(self, user: User) -> User:
         """Insert ``user``. Raises ``EmailUnavailableError`` if the email is taken,
         including when a concurrent sign-up won the race after our check."""

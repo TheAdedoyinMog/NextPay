@@ -1,6 +1,18 @@
 from fastapi import FastAPI
 
-from app.api import auth, balances, bills, debts, essential_expenses, goals, income_sources, me
+from app.api import (
+    auth,
+    balances,
+    bills,
+    debts,
+    essential_expenses,
+    goals,
+    income_sources,
+    me,
+    paychecks,
+    payments,
+    plans,
+)
 from app.api.errors import install_error_handlers
 from nextpay_engine import ENGINE_VERSION
 
@@ -14,6 +26,9 @@ app.include_router(essential_expenses.router)
 app.include_router(debts.router)
 app.include_router(goals.router)
 app.include_router(balances.router)
+app.include_router(paychecks.router)
+app.include_router(plans.router)
+app.include_router(payments.router)
 
 
 @app.get("/health")

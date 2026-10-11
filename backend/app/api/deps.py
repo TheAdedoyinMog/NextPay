@@ -20,12 +20,17 @@ from app.db.session import get_session
 from app.models import User
 from app.repositories import (
     BalanceSnapshotRepository,
+    BillPaymentRepository,
     BillRepository,
+    DebtPaymentRepository,
     DebtRepository,
     EssentialExpenseRepository,
     GoalRepository,
     IncomeSourceRepository,
+    PaycheckRepository,
+    PlanRepository,
     RefreshTokenRepository,
+    ReserveRepository,
     UserRepository,
 )
 from app.services.auth import AuthService
@@ -35,6 +40,12 @@ from app.services.debts import DebtService
 from app.services.essential_expenses import EssentialExpenseService
 from app.services.goals import GoalService
 from app.services.income_sources import IncomeSourceService
+from app.services.paychecks import PaycheckService
+from app.services.payments import PaymentService
+from app.services.planning_state import PlanningStateLoader
+from app.services.plans import PlanService
+from app.services.reserves import ReserveService
+from app.services.settings import SettingsService
 
 
 def get_clock() -> Clock:
@@ -86,10 +97,27 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 SessionDep = Annotated[Session, Depends(get_session)]
+ClockDep = Annotated[Clock, Depends(get_clock)]
 
 
-def get_income_source_service(session: SessionDep) -> IncomeSourceService:
-    return IncomeSourceService(income_sources=IncomeSourceRepository(session), transaction=session)
+def get_reserve_service(session: SessionDep) -> ReserveService:
+    return ReserveService(reserves=ReserveRepository(session))
+
+
+ReserveServiceDep = Annotated[ReserveService, Depends(get_reserve_service)]
+
+
+def get_settings_service(session: SessionDep) -> SettingsService:
+    return SettingsService(transaction=session)
+
+
+SettingsServiceDep = Annotated[SettingsService, Depends(get_settings_service)]
+
+
+def get_income_source_service(session: SessionDep, clock: ClockDep) -> IncomeSourceService:
+    return IncomeSourceService(
+        income_sources=IncomeSourceRepository(session), transaction=session, clock=clock
+    )
 
 
 def get_bill_service(session: SessionDep) -> BillService:
@@ -107,7 +135,12 @@ def get_debt_service(session: SessionDep) -> DebtService:
 
 
 def get_goal_service(session: SessionDep) -> GoalService:
-    return GoalService(goals=GoalRepository(session), transaction=session)
+    return GoalService(
+        users=UserRepository(session),
+        goals=GoalRepository(session),
+        reserves=ReserveRepository(session),
+        transaction=session,
+    )
 
 
 def get_balance_snapshot_service(
@@ -118,6 +151,63 @@ def get_balance_snapshot_service(
     )
 
 
+def get_paycheck_service(session: SessionDep, clock: ClockDep) -> PaycheckService:
+    return PaycheckService(
+        users=UserRepository(session),
+        income_sources=IncomeSourceRepository(session),
+        paychecks=PaycheckRepository(session),
+        plans=PlanRepository(session),
+        transaction=session,
+        clock=clock,
+    )
+
+
+def get_planning_state_loader(session: SessionDep) -> PlanningStateLoader:
+    return PlanningStateLoader(
+        income_sources=IncomeSourceRepository(session),
+        bills=BillRepository(session),
+        essentials=EssentialExpenseRepository(session),
+        debts=DebtRepository(session),
+        goals=GoalRepository(session),
+        reserves=ReserveRepository(session),
+        balances=BalanceSnapshotRepository(session),
+    )
+
+
+def get_plan_service(
+    session: SessionDep,
+    clock: ClockDep,
+    state: Annotated[PlanningStateLoader, Depends(get_planning_state_loader)],
+) -> PlanService:
+    return PlanService(
+        users=UserRepository(session),
+        income_sources=IncomeSourceRepository(session),
+        paychecks=PaycheckRepository(session),
+        plans=PlanRepository(session),
+        goals=GoalRepository(session),
+        reserves=ReserveRepository(session),
+        state=state,
+        transaction=session,
+        clock=clock,
+    )
+
+
+def get_payment_service(session: SessionDep, clock: ClockDep) -> PaymentService:
+    return PaymentService(
+        users=UserRepository(session),
+        bills=BillRepository(session),
+        bill_payments=BillPaymentRepository(session),
+        debts=DebtRepository(session),
+        debt_payments=DebtPaymentRepository(session),
+        reserves=ReserveRepository(session),
+        transaction=session,
+        clock=clock,
+    )
+
+
+PaymentServiceDep = Annotated[PaymentService, Depends(get_payment_service)]
+PaycheckServiceDep = Annotated[PaycheckService, Depends(get_paycheck_service)]
+PlanServiceDep = Annotated[PlanService, Depends(get_plan_service)]
 IncomeSourceServiceDep = Annotated[IncomeSourceService, Depends(get_income_source_service)]
 BillServiceDep = Annotated[BillService, Depends(get_bill_service)]
 EssentialExpenseServiceDep = Annotated[

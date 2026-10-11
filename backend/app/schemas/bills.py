@@ -7,7 +7,14 @@ from typing import Annotated
 from pydantic import BaseModel, Field
 
 from app.core.limits import MAX_REPEAT_EVERY_MONTHS
-from app.schemas.common import IsoDate, Name, PositiveCents, Priority, RequestModel
+from app.schemas.common import (
+    IsoDate,
+    Name,
+    PositiveCents,
+    Priority,
+    RequestModel,
+    ReservedCents,
+)
 
 
 class BillRequest(RequestModel):
@@ -35,6 +42,7 @@ class BillResponse(BaseModel):
     priority: int
     first_due_date: date
     repeat_every_months: int | None
+    reserved_cents: ReservedCents
     created_at: datetime
     updated_at: datetime
 

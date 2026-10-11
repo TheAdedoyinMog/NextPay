@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 import nextpay_engine as engine
-from app.core.errors import IncomeSourceInUseError, InvalidInputError, NotFoundError
+from app.core.errors import InvalidInputError, NotFoundError
 from app.models import PayFrequency
 from app.services.engine_mapping import to_engine_income_source
 from app.services.income_sources import IncomeSourceInput, IncomeSourceService
@@ -181,14 +181,26 @@ def test_delete_removes_a_source_without_paychecks(
     assert transaction.commits == 2
 
 
-def test_a_source_with_paychecks_cannot_be_deleted(
-    income_source_service: IncomeSourceService, income_sources: Fake, transaction: Fake
+def test_a_source_with_paychecks_is_archived_not_deleted(
+    income_source_service: IncomeSourceService, income_sources: Fake, transaction: Fake, clock: Fake
 ) -> None:
     job = income_source_service.create(ADA, JOB)
+    side_job = income_source_service.create(ADA, replace(JOB, name="Side job"))
     income_sources.with_paychecks.add(job.id)
 
-    with pytest.raises(IncomeSourceInUseError):
-        income_source_service.delete(ADA, job.id)
+    income_source_service.delete(ADA, job.id)
 
-    assert income_sources.rows == {job.id: job}
-    assert transaction.commits == 1
+    # Kept as history, stamped with when it was archived...
+    assert income_sources.rows[job.id] is job
+    assert job.archived_at == clock.now
+    assert transaction.commits == 3
+    # ...but gone from every operation, like a deleted source.
+    assert list(income_source_service.list_for(ADA)) == [side_job]
+    with pytest.raises(NotFoundError):
+        income_source_service.get(ADA, job.id)
+    with pytest.raises(NotFoundError):
+        income_source_service.update(ADA, job.id, replace(JOB, name="Back again"))
+    with pytest.raises(NotFoundError):
+        income_source_service.delete(ADA, job.id)
+    assert job.name == "Day job"
+    assert transaction.commits == 3

@@ -59,7 +59,9 @@ def assert_error(response: Any, status: int, code: str) -> Json:
 
 
 def test_a_goal_has_exactly_these_fields(client: TestClient, ada: Headers) -> None:
-    assert set(create(client, ada)) == {*CAMERA, "id", "created_at", "updated_at"}
+    camera = create(client, ada)
+    assert set(camera) == {*CAMERA, "id", "reserved_cents", "created_at", "updated_at"}
+    assert camera["reserved_cents"] == 0
 
 
 @pytest.mark.parametrize("kind", ["emergency", "savings", "purchase"])
@@ -292,4 +294,7 @@ def test_deleting_a_goal_releases_its_reserve_and_keeps_plan_history(
         select(GoalProjection.name, GoalProjection.goal_id).order_by(GoalProjection.position)
     ).all()
     assert projections == [("Camera", None), ("Trip", trip_id)]
-    assert client.get("/goals", headers=ada).json() == {"items": [trip]}
+    # The surviving goal now shows the $240 the seeded plan set aside for it.
+    assert client.get("/goals", headers=ada).json() == {
+        "items": [{**trip, "reserved_cents": 24_000}]
+    }

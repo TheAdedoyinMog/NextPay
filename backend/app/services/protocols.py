@@ -15,6 +15,12 @@ class Transaction(Protocol):
     def commit(self) -> None: ...
 
 
+class UserLock(Protocol):
+    """Serializes one user's planning writes. ``lock`` holds until the transaction ends."""
+
+    def lock(self, user_id: uuid.UUID) -> None: ...
+
+
 class OwnedStore[M](Protocol):
     """Rows that belong to one user. Every read is scoped by ``user_id``."""
 

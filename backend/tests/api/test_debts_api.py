@@ -31,7 +31,9 @@ def create(client: TestClient, headers: Headers, **changes: Any) -> Json:
 
 
 def test_a_debt_has_exactly_these_fields(client: TestClient, ada: Headers) -> None:
-    assert set(create(client, ada)) == {*CAR_LOAN, "id", "created_at", "updated_at"}
+    loan = create(client, ada)
+    assert set(loan) == {*CAR_LOAN, "id", "reserved_cents", "created_at", "updated_at"}
+    assert loan["reserved_cents"] == 0
 
 
 def test_the_smallest_and_largest_values_are_accepted(client: TestClient, ada: Headers) -> None:

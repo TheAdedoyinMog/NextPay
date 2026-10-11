@@ -6,7 +6,7 @@ cannot drift apart. Plan generation (2D) feeds the engine through the same
 functions.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 import nextpay_engine as engine
 from app import models
@@ -107,3 +107,51 @@ def to_engine_goal(row: models.Goal) -> engine.Goal:
 def to_engine_balance(row: models.BalanceSnapshot) -> engine.Money:
     """``FinancialState.available_balance`` as of this snapshot (signed)."""
     return engine.Money(row.amount_cents)
+
+
+def to_engine_reserve(row: models.Reserve) -> engine.Reserve:
+    target_id = {
+        engine.ReserveKind.BILL: row.bill_id,
+        engine.ReserveKind.GOAL: row.goal_id,
+        engine.ReserveKind.DEBT: row.debt_id,
+    }[row.kind]
+    return engine.Reserve(row.kind, str(target_id), engine.Money(row.amount_cents))
+
+
+def to_engine_paycheck(row: models.Paycheck) -> engine.Paycheck:
+    actual = row.actual_amount_cents
+    return engine.Paycheck(
+        source_id=str(row.income_source_id),
+        pay_date=row.pay_date,
+        expected_amount=engine.Money(row.expected_amount_cents),
+        actual_amount=None if actual is None else engine.Money(actual),
+    )
+
+
+def to_engine_state(
+    *,
+    user: models.User,
+    balance: models.BalanceSnapshot | None,
+    income_sources: Iterable[models.IncomeSource],
+    bills: Iterable[models.Bill],
+    essentials: Iterable[models.EssentialExpense],
+    debts: Iterable[models.Debt],
+    goals: Iterable[models.Goal],
+    reserves: Iterable[models.Reserve],
+) -> engine.FinancialState:
+    """Everything the planner knows about a user, from their rows.
+
+    ``balance`` is their latest snapshot; with none, they start from $0.
+    ``income_sources`` must be the active ones: an archived source pays nothing.
+    A reserve of $0 is left out, since the planner treats it as no reserve.
+    """
+    return engine.FinancialState(
+        available_balance=engine.Money.zero() if balance is None else to_engine_balance(balance),
+        income_sources=tuple(to_engine_income_source(row) for row in income_sources),
+        bills=tuple(to_engine_bill(row) for row in bills),
+        essentials=tuple(to_engine_essential(row) for row in essentials),
+        debts=tuple(to_engine_debt(row) for row in debts),
+        goals=tuple(to_engine_goal(row) for row in goals),
+        reserves=tuple(to_engine_reserve(row) for row in reserves if row.amount_cents != 0),
+        no_deadline_goal_share_bps=user.no_deadline_goal_share_bps,
+    )

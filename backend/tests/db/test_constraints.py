@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session
 from app.models import (
     Allocation,
     Bill,
+    Debt,
+    DebtPayment,
     Goal,
     IncomeSource,
     Paycheck,
@@ -325,6 +327,61 @@ def test_an_income_source_with_paychecks_cannot_be_deleted(db_session: Session) 
     source = db_session.get_one(Paycheck, plan.paycheck_id).income_source_id
     with violates(db_session, "fk_paychecks_user_id_income_source_id_income_sources"):
         db_session.execute(text("DELETE FROM income_sources WHERE id = :id"), {"id": source})
+
+
+def add_debt(session: Session, user: User) -> Debt:
+    debt = Debt(
+        user_id=user.id,
+        name="Car loan",
+        balance_cents=900_000,
+        apr_bps=699,
+        minimum_payment_cents=15_000,
+        due_day=20,
+    )
+    session.add(debt)
+    session.flush()
+    return debt
+
+
+def debt_payment(user: User, debt: Debt, amount_cents: int = 15_000) -> DebtPayment:
+    return DebtPayment(
+        user_id=user.id, debt_id=debt.id, paid_on=date(2026, 10, 19), amount_cents=amount_cents
+    )
+
+
+def test_a_debt_payment_must_be_positive(db_session: Session) -> None:
+    user = add_user(db_session)
+    debt = add_debt(db_session, user)
+    with violates(db_session, "ck_debt_payments_amount_positive"):
+        db_session.add(debt_payment(user, debt, amount_cents=0))
+
+
+def test_a_debt_payment_cannot_point_at_another_users_debt(db_session: Session) -> None:
+    ada, bob = add_user(db_session), add_user(db_session, "bob@example.com")
+    debt = add_debt(db_session, ada)
+    with violates(db_session, "fk_debt_payments_user_id_debt_id_debts"):
+        db_session.add(debt_payment(bob, debt))
+
+
+def test_deleting_a_debt_deletes_its_payments(db_session: Session) -> None:
+    user = add_user(db_session)
+    debt, other = add_debt(db_session, user), add_debt(db_session, user)
+    db_session.add_all([debt_payment(user, debt), debt_payment(user, other)])
+    db_session.flush()
+
+    db_session.execute(text("DELETE FROM debts WHERE id = :id"), {"id": debt.id})
+
+    assert db_session.scalars(select(DebtPayment.debt_id)).all() == [other.id]
+
+
+def test_an_income_source_is_not_archived_until_it_is(db_session: Session) -> None:
+    user = add_user(db_session)
+    source = add_income_source(db_session, user)
+    assert source.archived_at is None
+    source.archived_at = datetime(2026, 10, 10, tzinfo=UTC)
+    db_session.flush()
+    db_session.refresh(source)
+    assert source.archived_at == datetime(2026, 10, 10, tzinfo=UTC)
 
 
 def test_deleting_a_user_deletes_all_their_data(db_session: Session) -> None:

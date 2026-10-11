@@ -46,6 +46,7 @@ amount; the server sets `as_of`. A new balance is a new snapshot, and the newest
 current balance.
 
 ### Deleting
+- *(Changed by ADR 0011, 2026-10-10: such a source is now archived, and the 409 is gone.)*
 - **Income source with paychecks: refused, 409 `income_source_in_use`.** Paychecks and
   their plans are history and belong to their source (RESTRICT, ADR 0008). The database
   decides, so a paycheck recorded during the request is still caught. A source with no
@@ -80,4 +81,5 @@ current balance.
 - POST is not idempotent: a retried request creates a duplicate. Idempotency keys are
   deferred to the mobile client work.
 - Open for 2D: whether `current_cents` may still be edited by hand once a goal has a
-  reserve, and showing `reserved_cents` on bills, debts and goals.
+  reserve, and showing `reserved_cents` on bills, debts and goals. (ADR 0011 settled both:
+  yes, and lowering it lowers the reserve; and `reserved_cents` is on all three.)

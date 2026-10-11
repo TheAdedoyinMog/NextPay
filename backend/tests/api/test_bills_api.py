@@ -23,7 +23,7 @@ RENT: Json = {
     "first_due_date": "2026-10-20",
     "repeat_every_months": 1,
 }
-FIELDS = {*RENT, "id", "created_at", "updated_at"}
+FIELDS = {*RENT, "id", "reserved_cents", "created_at", "updated_at"}
 
 
 @pytest.fixture
@@ -54,6 +54,7 @@ def test_create_returns_the_bill_and_stores_it_for_the_user(
 
     assert set(bill) == FIELDS
     assert {name: bill[name] for name in RENT} == RENT
+    assert bill["reserved_cents"] == 0
 
     stored = db_session.scalars(select(Bill)).one()
     assert str(stored.id) == bill["id"]

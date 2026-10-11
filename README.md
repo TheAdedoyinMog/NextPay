@@ -55,9 +55,19 @@ with `/auth/register` or `/auth/login`, then send the access token as a Bearer t
 |---|---|
 | `/income-sources`, `/bills`, `/essential-expenses`, `/debts`, `/goals` | `POST`, `GET`, `GET /{id}`, `PUT /{id}`, `DELETE /{id}` |
 | `/balance-snapshots` | `POST`, `GET` (append-only) |
+| `/me/settings` | `PUT` (time zone, goal share) |
+| `/paychecks` | `GET` (the timeline of paydays) |
+| `/income-sources/{id}/paychecks/{pay_date}` | `PUT` (record what actually arrived) |
+| `/plans` | `POST` (plan a paycheck), `GET /{id}`, `POST /{id}/commit` |
+| `/bills/{id}/payments`, `/debts/{id}/payments` | `POST`, `GET` |
 
 Money is integer cents. `PUT` replaces the whole resource, so every field is required and
 a nullable one must be sent as `null`. Conventions and delete rules: ADR 0010.
+
+A payday goes like this: enter your balance (`POST /balance-snapshots`), find the paycheck
+(`GET /paychecks`), plan it (`POST /plans`), and commit the plan. Committing sets aside
+what the plan put toward bills, debts and goals; paying a bill or debt draws that down.
+How plans, commits and payments work, and one known limitation: ADR 0011.
 
 ## Ground rules
 

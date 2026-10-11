@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Sequence
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.orm import InstrumentedAttribute, Session
 
 from app.models.columns import UserOwnedMixin
@@ -25,16 +25,16 @@ class UserOwnedRepository[M: UserOwnedMixin]:
         # id last, so the order is total even when every other column ties.
         self._order_by = (*order_by, model.id)
 
+    def _owned_by(self, user_id: uuid.UUID) -> Select[M]:
+        """Every row of ``user_id``'s that this repository shows: the base of every read."""
+        return select(self._model).where(self._model.user_id == user_id)
+
     def get(self, user_id: uuid.UUID, row_id: uuid.UUID) -> M | None:
         """The row with ``row_id`` if ``user_id`` owns it; None otherwise."""
-        return self._session.scalar(
-            select(self._model).where(self._model.user_id == user_id, self._model.id == row_id)
-        )
+        return self._session.scalar(self._owned_by(user_id).where(self._model.id == row_id))
 
     def list_for(self, user_id: uuid.UUID) -> Sequence[M]:
-        return self._session.scalars(
-            select(self._model).where(self._model.user_id == user_id).order_by(*self._order_by)
-        ).all()
+        return self._session.scalars(self._owned_by(user_id).order_by(*self._order_by)).all()
 
     def add(self, row: M) -> M:
         self._session.add(row)

@@ -18,6 +18,11 @@ MAX_REPEAT_EVERY_MONTHS = 120
 # 1,000% a year, in basis points.
 MAX_APR_BPS = 100_000
 
+# The paycheck timeline: how far it looks by default, and the widest range allowed.
+TIMELINE_DAYS_BACK = 7
+TIMELINE_DAYS_AHEAD = 62
+MAX_TIMELINE_DAYS = 366
+
 # How many balance snapshots one request may list.
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 100

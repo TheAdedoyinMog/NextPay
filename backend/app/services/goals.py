@@ -15,8 +15,9 @@ from typing import Protocol
 from app.core.errors import NotFoundError
 from app.models import Goal
 from app.services.engine_mapping import to_engine_goal, validated
-from app.services.protocols import OwnedStore, Transaction
-from nextpay_engine import GoalKind
+from app.services.protocols import OwnedStore, Transaction, UserLock
+from app.services.reserves import ReserveStore, cap_reserve
+from nextpay_engine import GoalKind, ReserveKind
 
 
 class GoalStore(OwnedStore[Goal], Protocol):
@@ -41,8 +42,17 @@ class GoalInput:
 
 
 class GoalService:
-    def __init__(self, *, goals: GoalStore, transaction: Transaction) -> None:
+    def __init__(
+        self,
+        *,
+        users: UserLock,
+        goals: GoalStore,
+        reserves: ReserveStore,
+        transaction: Transaction,
+    ) -> None:
+        self._users = users
         self._goals = goals
+        self._reserves = reserves
         self._transaction = transaction
 
     def create(self, user_id: uuid.UUID, data: GoalInput) -> Goal:
@@ -66,12 +76,20 @@ class GoalService:
 
     def update(self, user_id: uuid.UUID, goal_id: uuid.UUID, data: GoalInput) -> Goal:
         """Replace every field. Raises ``NotFoundError``, ``InvalidInputError``, or
-        ``EmergencyGoalExistsError``."""
+        ``EmergencyGoalExistsError``.
+
+        A goal cannot have more set aside than it has saved: lowering
+        ``current_cents`` below the goal's reserve (money was taken back out)
+        lowers the reserve to match, which releases the difference. Raising it
+        reserves nothing; only committing a plan does (ADR 0011).
+        """
+        self._users.lock(user_id)
         goal = self.get(user_id, goal_id)
         # Check a copy first, so a rejected update never touches the stored goal.
         validated(_fill(Goal(id=goal.id, user_id=user_id), data), to_engine_goal)
         _fill(goal, data)
         self._goals.save()
+        cap_reserve(self._reserves, user_id, ReserveKind.GOAL, goal.id, goal.current_cents)
         self._transaction.commit()
         return goal
 

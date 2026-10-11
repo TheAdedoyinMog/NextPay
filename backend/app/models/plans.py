@@ -73,6 +73,9 @@ class PaycheckPlan(UserOwnedMixin, TimestampsMixin, Base):
     available_balance_cents: Mapped[Cents]
     safe_to_spend_cents: Mapped[Cents]
     reserve_deficit_cents: Mapped[Cents]
+    # When the balance above was entered; None if the user had entered none ($0).
+    # Sorted after the timestamps because a migration added it to the table's end.
+    balance_as_of: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), sort_order=3)
 
 
 class Allocation(UserOwnedMixin, CreatedAtMixin, Base):

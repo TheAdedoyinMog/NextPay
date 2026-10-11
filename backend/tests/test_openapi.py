@@ -26,7 +26,15 @@ RESOURCE_REQUESTS = [
     "DebtRequest",
     "GoalRequest",
     "BalanceSnapshotRequest",
+    "SettingsRequest",
+    "ActualAmountRequest",
+    "PlanRequest",
 ]
+# Recording a payment is an event, not a replacement: every field has an obvious
+# default, so none is required and "mark as paid" is a POST of {}.
+EVENT_REQUESTS = {"BillPaymentRequest", "DebtPaymentRequest"}
+# Parts of IncomeSourceRequest, not request bodies of their own.
+SCHEDULES = {"WeeklySchedule", "BiweeklySchedule", "SemiMonthlySchedule", "MonthlySchedule"}
 
 
 def test_every_resource_request_schema_is_checked_here() -> None:
@@ -38,8 +46,15 @@ def test_every_resource_request_schema_is_checked_here() -> None:
         for operation in operations.values()
         if "requestBody" in operation
     }
-    assert referenced <= set(RESOURCE_REQUESTS)
-    assert len(referenced) == 6
+    assert referenced == (set(RESOURCE_REQUESTS) - SCHEDULES) | EVENT_REQUESTS
+
+
+@pytest.mark.parametrize("name", sorted(EVENT_REQUESTS))
+def test_an_event_request_needs_no_fields_and_allows_no_others(name: str) -> None:
+    schema = SCHEMAS[name]
+    assert "required" not in schema
+    assert schema["additionalProperties"] is False
+    assert all("Left out" in field["description"] for field in schema["properties"].values())
 
 
 @pytest.mark.parametrize("name", RESOURCE_REQUESTS)

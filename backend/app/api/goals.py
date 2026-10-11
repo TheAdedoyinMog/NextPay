@@ -5,11 +5,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query, status
 
-from app.api.deps import CurrentUser, GoalServiceDep
+from app.api.deps import CurrentUser, GoalServiceDep, ReserveServiceDep
 from app.api.errors import error_responses
 from app.api.mappers import to_goal_input, to_goal_list_response, to_goal_response
 from app.schemas.goals import GoalListResponse, GoalRequest, GoalResponse
-from nextpay_engine import GoalKind
+from nextpay_engine import GoalKind, ReserveKind
 
 router = APIRouter(prefix="/goals", tags=["goals"])
 
@@ -22,21 +22,29 @@ router = APIRouter(prefix="/goals", tags=["goals"])
     description="A second emergency goal is refused with 409 `emergency_goal_exists`.",
 )
 def create_goal(body: GoalRequest, user: CurrentUser, goals: GoalServiceDep) -> GoalResponse:
-    return to_goal_response(goals.create(user.id, to_goal_input(body)))
+    # A new goal has nothing set aside yet.
+    return to_goal_response(goals.create(user.id, to_goal_input(body)), {})
 
 
 @router.get("", responses=error_responses(401, 422), summary="List your goals")
 def list_goals(
     user: CurrentUser,
     goals: GoalServiceDep,
+    reserves: ReserveServiceDep,
     kind: Annotated[GoalKind | None, Query(description="Only goals of this kind.")] = None,
 ) -> GoalListResponse:
-    return to_goal_list_response(goals.list_for(user.id, kind))
+    return to_goal_list_response(
+        goals.list_for(user.id, kind), reserves.amounts(user.id, ReserveKind.GOAL)
+    )
 
 
 @router.get("/{goal_id}", responses=error_responses(401, 404, 422), summary="Get a goal")
-def get_goal(goal_id: uuid.UUID, user: CurrentUser, goals: GoalServiceDep) -> GoalResponse:
-    return to_goal_response(goals.get(user.id, goal_id))
+def get_goal(
+    goal_id: uuid.UUID, user: CurrentUser, goals: GoalServiceDep, reserves: ReserveServiceDep
+) -> GoalResponse:
+    return to_goal_response(
+        goals.get(user.id, goal_id), reserves.amounts(user.id, ReserveKind.GOAL)
+    )
 
 
 @router.put(
@@ -49,9 +57,15 @@ def get_goal(goal_id: uuid.UUID, user: CurrentUser, goals: GoalServiceDep) -> Go
     ),
 )
 def replace_goal(
-    goal_id: uuid.UUID, body: GoalRequest, user: CurrentUser, goals: GoalServiceDep
+    goal_id: uuid.UUID,
+    body: GoalRequest,
+    user: CurrentUser,
+    goals: GoalServiceDep,
+    reserves: ReserveServiceDep,
 ) -> GoalResponse:
-    return to_goal_response(goals.update(user.id, goal_id, to_goal_input(body)))
+    # Read what is set aside after the update: lowering current_cents can lower it.
+    goal = goals.update(user.id, goal_id, to_goal_input(body))
+    return to_goal_response(goal, reserves.amounts(user.id, ReserveKind.GOAL))
 
 
 @router.delete(

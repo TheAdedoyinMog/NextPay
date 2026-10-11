@@ -49,7 +49,13 @@ def test_register_signs_the_user_in(client: TestClient) -> None:
 
     me = client.get("/me", headers=bearer(tokens))
     assert me.status_code == 200
-    assert set(me.json()) == {"id", "email", "timezone", "created_at"}
+    assert set(me.json()) == {
+        "id",
+        "email",
+        "timezone",
+        "no_deadline_goal_share_bps",
+        "created_at",
+    }
     assert me.json()["email"] == EMAIL
     assert me.json()["timezone"] == "UTC"
 

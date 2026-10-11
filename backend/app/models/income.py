@@ -8,10 +8,10 @@ days (at least 7 days apart) stay in the engine.
 """
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 
-from sqlalchemy import CheckConstraint, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, DateTime, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -63,6 +63,10 @@ class IncomeSource(UserOwnedMixin, TimestampsMixin, Base):
     anchor_date: Mapped[date | None]
     day_of_month: Mapped[int | None]
     second_day_of_month: Mapped[int | None]
+    # Set when the user removes a source that has paychecks: it stops paying and
+    # leaves the API, but its paychecks and plans stay as history (ADR 0011).
+    # Sorted after the timestamps because a migration added it to the table's end.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), sort_order=3)
 
 
 class Paycheck(UserOwnedMixin, TimestampsMixin, Base):
@@ -72,7 +76,7 @@ class Paycheck(UserOwnedMixin, TimestampsMixin, Base):
     __table_args__ = (
         owned_by_user(),
         # Paychecks and their plans are history: an income source with paychecks
-        # cannot be deleted out from under them (2C decides archive vs. refuse).
+        # cannot be deleted out from under them. It is archived instead (ADR 0011).
         tenant_fk("income_source_id", "income_sources", ondelete="RESTRICT"),
         UniqueConstraint("income_source_id", "pay_date"),
         CheckConstraint("expected_amount_cents > 0", name="expected_amount_positive"),

@@ -165,10 +165,11 @@ def test_list_is_ordered_by_name(client: TestClient, ada: Headers) -> None:
 # --- delete --------------------------------------------------------------------
 
 
-def test_a_source_with_paychecks_cannot_be_deleted(
+def test_a_source_with_paychecks_is_archived_not_deleted(
     client: TestClient, ada: Headers, db_session: Session
 ) -> None:
     source = create(client, ada)
+    path = f"/income-sources/{source['id']}"
     db_session.add(
         Paycheck(
             user_id=uuid.UUID(client.get("/me", headers=ada).json()["id"]),
@@ -179,17 +180,20 @@ def test_a_source_with_paychecks_cannot_be_deleted(
     )
     db_session.commit()
 
-    response = client.delete(f"/income-sources/{source['id']}", headers=ada)
+    assert client.delete(path, headers=ada).status_code == 204
 
-    error = assert_error(response, 409, "income_source_in_use")
-    assert "paychecks" in error["message"]
-    # Nothing was lost, and the source can still be read and changed.
-    assert db_session.scalar(select(func.count()).select_from(Paycheck)) == 1
-    assert client.get(f"/income-sources/{source['id']}", headers=ada).json() == source
-    renamed = client.put(
-        f"/income-sources/{source['id']}", json={**JOB, "name": "Old job"}, headers=ada
+    # History is kept: the row is archived as of now, and its paycheck is still there.
+    row = db_session.scalars(select(IncomeSource)).one()
+    assert (
+        row.archived_at is not None and row.archived_at.isoformat() == "2026-10-07T12:00:00+00:00"
     )
-    assert renamed.status_code == 200 and renamed.json()["name"] == "Old job"
+    assert db_session.scalar(select(func.count()).select_from(Paycheck)) == 1
+    # To the API it is gone, exactly like a deleted source.
+    assert client.get("/income-sources", headers=ada).json() == {"items": []}
+    assert_error(client.get(path, headers=ada), 404, "not_found")
+    assert_error(client.put(path, json=JOB, headers=ada), 404, "not_found")
+    assert_error(client.delete(path, headers=ada), 404, "not_found")
+    assert db_session.scalars(select(IncomeSource.name)).one() == "Day job"
 
 
 def test_paychecks_on_one_source_do_not_block_deleting_another(
