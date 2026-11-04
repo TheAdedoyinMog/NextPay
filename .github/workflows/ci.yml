@@ -46,3 +46,31 @@ jobs:
           uv run alembic -c backend/alembic.ini check
       - name: Tests
         run: uv run pytest --cov=nextpay_engine --cov=app --cov-report=term-missing
+
+  mobile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: mobile/.nvmrc
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      # The drift check exports the schema from the FastAPI app.
+      - uses: astral-sh/setup-uv@v3
+      - run: uv python install 3.12
+      - run: uv sync --all-packages
+      - run: npm ci
+      - name: Format check
+        run: npm run format:check
+      - name: Lint
+        run: npm run lint
+      - name: Type check
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+      - name: Generated API types are up to date
+        run: npm run api:check

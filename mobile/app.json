@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "NextPay",
+    "slug": "nextpay",
+    "version": "1.0.0",
+    "platforms": ["ios"],
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "nextpay",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "bundleIdentifier": "com.theadedoyinmog.nextpay",
+      "supportsTablet": false,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSLocalNetworkUsageDescription": "NextPay's development build connects to your computer over the local network."
+      }
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#208AEF",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 76
+        }
+      ],
+      ["expo-secure-store", { "faceIDPermission": false }]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

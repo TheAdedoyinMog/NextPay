@@ -69,6 +69,12 @@ A payday goes like this: enter your balance (`POST /balance-snapshots`), find th
 what the plan put toward bills, debts and goals; paying a bill or debt draws that down.
 How plans, commits and payments work, and one known limitation: ADR 0011.
 
+### The mobile app
+
+Setup, daily commands, reaching the API from a phone, and building for iOS are in
+[mobile/README.md](mobile/README.md). Decisions: ADR 0012. After any change to the API, run
+`npm run api:generate` in `mobile/` and commit the result; CI fails otherwise.
+
 ## Ground rules
 
 1. All financial math lives in `engine/`. Never in the backend routes, never in the app.

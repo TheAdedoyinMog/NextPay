@@ -14,6 +14,7 @@ from app.api import (
     plans,
 )
 from app.api.errors import install_error_handlers
+from app.schemas.health import HealthResponse
 from nextpay_engine import ENGINE_VERSION
 
 app = FastAPI(title="NextPay API", version="0.1.0")
@@ -32,5 +33,5 @@ app.include_router(payments.router)
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "engine_version": ENGINE_VERSION}
+def health() -> HealthResponse:
+    return HealthResponse(status="ok", engine_version=ENGINE_VERSION)
