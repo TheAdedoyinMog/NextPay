@@ -56,28 +56,39 @@ New-NetFirewallRule -DisplayName "NextPay dev (API and Metro)" -Direction Inboun
 
 To undo the rule: `Remove-NetFirewallRule -DisplayName "NextPay dev (API and Metro)"`.
 
-**Each session**, in two terminals:
+**Each session**, open two terminals. Each one starts by changing to the folder its command
+needs, so it doesn't matter where the terminal opens.
+
+Terminal 1, the API. `--host 0.0.0.0` makes it reachable from outside this PC:
 
 ```powershell
-# Repo root. --host 0.0.0.0 makes the API reachable from outside this PC.
+cd C:\Users\thead\Downloads\nextpay-phase0\nextpay
 uv run fastapi dev backend/app/main.py --host 0.0.0.0
+```
 
-# mobile/
+Terminal 2, Metro:
+
+```powershell
+cd C:\Users\thead\Downloads\nextpay-phase0\nextpay\mobile
 npm start
 ```
+
+If your clone is somewhere else, change the paths: the API runs from the repo root, and
+Metro runs from `mobile`.
 
 ### Troubleshooting
 
 - **Metro shows `192.168.56.x`.** That is a VirtualBox adapter, which your phone can't reach.
-  Name your Wi-Fi address instead (find it with `ipconfig`):
+  In terminal 2, in `mobile`, name your Wi-Fi address instead (find it with `ipconfig`):
   `$env:REACT_NATIVE_PACKAGER_HOSTNAME = "192.168.1.78"; npm start`
 - **"Could not reach the server".** First check that the API answers in Safari on the phone at
   `http://<PC address>:8000/health`.
   - If Safari can't load it, the problem is the network: the firewall rule, the Wi-Fi being
     Public, the API running without `--host 0.0.0.0`, or the router isolating devices.
   - If Safari can load it, allow the app under Settings > Privacy & Security > Local Network.
-- **A network that blocks device-to-device traffic.** Tunnel both sides:
-  `cloudflared tunnel --url http://localhost:8000`, then
+- **A network that blocks device-to-device traffic.** Tunnel both sides. With the API
+  running, start the tunnel in a third terminal (any folder):
+  `cloudflared tunnel --url http://localhost:8000`. Then, in terminal 2, in `mobile`:
   `$env:EXPO_PUBLIC_API_URL = "https://<the-url>"; npx expo start --dev-client --tunnel`
 
 ## Your first iOS development build
@@ -97,7 +108,9 @@ instantly from Metro.
 
 **Steps**, in `mobile/`:
 
-1. Sign in, and link the project. This adds a project ID to `app.json`; commit that change.
+1. Sign in, and link the project. This adds a project ID to `app.json`. The project is already
+   linked (`extra.eas.projectId`), so on this repo `init` only confirms the link. If `init`
+   adds anything else to `app.json`, such as `extra.router`, remove it.
    ```powershell
    npx eas-cli@latest login
    npx eas-cli@latest init
