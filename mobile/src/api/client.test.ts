@@ -1,4 +1,4 @@
-import { api, ApiError, setAccessTokenProvider, unwrap } from './client';
+import { api, ApiError, errorMessage, setAuthHandler, unwrap } from './client';
 
 jest.mock('./config', () => ({ API_BASE_URL: 'http://api.test' }));
 
@@ -18,7 +18,7 @@ function getHealth() {
 beforeEach(() => {
   fetchMock.mockReset();
   globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
-  setAccessTokenProvider(() => null);
+  setAuthHandler({ getAccessToken: async () => null, refreshAccessToken: async () => null });
 });
 
 describe('requests', () => {
@@ -29,9 +29,9 @@ describe('requests', () => {
     expect(fetchMock.mock.calls[0]?.[0].url).toBe('http://api.test/health');
   });
 
-  it('sends the token from the provider as a bearer header', async () => {
+  it('sends the session’s token as a bearer header', async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, {}));
-    setAccessTokenProvider(async () => 'a-token');
+    setAuthHandler({ getAccessToken: async () => 'a-token', refreshAccessToken: async () => null });
 
     await getHealth();
 
@@ -46,7 +46,7 @@ describe('requests', () => {
     expect(fetchMock.mock.calls[0]?.[0].headers.get('Authorization')).toBeNull();
   });
 
-  it('gives up on a server that never answers', async () => {
+  it('gives up on a server that never answers, and says it timed out', async () => {
     jest.useFakeTimers();
     try {
       fetchMock.mockImplementation(
@@ -57,7 +57,11 @@ describe('requests', () => {
       );
 
       const call = getHealth();
-      const failure = expect(call).rejects.toMatchObject({ status: 0, code: 'network_error' });
+      const failure = expect(call).rejects.toMatchObject({
+        status: 0,
+        code: 'timeout',
+        message: 'The server at http://api.test took too long to answer.',
+      });
       await jest.advanceTimersByTimeAsync(15_000);
       await failure;
     } finally {
@@ -98,5 +102,14 @@ describe('errors', () => {
       code: 'network_error',
       message: 'Could not reach the server at http://api.test.',
     });
+  });
+});
+
+describe('errorMessage', () => {
+  it('shows the backend’s message, and a generic one for anything unexpected', () => {
+    expect(errorMessage(new ApiError(409, 'email_unavailable', 'Not this email.'))).toBe(
+      'Not this email.',
+    );
+    expect(errorMessage(new Error('a bug'))).toBe('Something went wrong. Try again.');
   });
 });

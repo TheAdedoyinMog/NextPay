@@ -1,15 +1,15 @@
-/** Temporary dev screen: proves the phone can reach the local backend. Replaced in 3B. */
-import { Stack } from 'expo-router';
+/** Development only: which API the app is using, and whether it answers. */
 import { Button, StyleSheet, Text, View } from 'react-native';
 
 import { API_BASE_URL } from '@/api/config';
-import { useHealth } from '@/features/health/api';
 
-export default function DevHealthScreen() {
+import { useHealth } from './api';
+
+export function DevStatus() {
   const health = useHealth();
   return (
-    <View style={styles.screen}>
-      <Stack.Screen options={{ title: 'Backend connection' }} />
+    <View style={styles.panel}>
+      <Text style={styles.heading}>Development</Text>
       <Text style={styles.label}>API address</Text>
       <Text style={styles.value}>{API_BASE_URL}</Text>
       {health.isPending && <Text style={styles.value}>Checking…</Text>}
@@ -37,7 +37,8 @@ export default function DevHealthScreen() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, gap: 8, padding: 24 },
-  label: { color: '#666', fontSize: 14, marginTop: 12 },
-  value: { fontSize: 18 },
+  panel: { backgroundColor: '#F2F2F7', borderRadius: 12, gap: 4, marginTop: 32, padding: 16 },
+  heading: { fontSize: 13, fontWeight: '600', textTransform: 'uppercase', color: '#666' },
+  label: { color: '#666', fontSize: 13, marginTop: 8 },
+  value: { fontSize: 16 },
 });

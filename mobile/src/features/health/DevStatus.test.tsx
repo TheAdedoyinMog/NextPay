@@ -1,10 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react-native';
 
-import DevHealthScreen from '@/app/index';
+import { DevStatus } from './DevStatus';
 
 jest.mock('@/api/config', () => ({ API_BASE_URL: 'http://api.test' }));
-jest.mock('expo-router', () => ({ Stack: { Screen: () => null } }));
 
 async function renderScreen() {
   const client = new QueryClient({
@@ -13,7 +12,7 @@ async function renderScreen() {
   });
   await render(
     <QueryClientProvider client={client}>
-      <DevHealthScreen />
+      <DevStatus />
     </QueryClientProvider>,
   );
 }
