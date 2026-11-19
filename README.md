@@ -29,8 +29,10 @@ uv run fastapi dev backend/app/main.py   # start the API with auto-reload (needs
 
 ### Local database
 
-Requires Docker. Settings come from `NEXTPAY_*` environment variables; copy
-`.env.example` to `.env` for local defaults (PowerShell: `Copy-Item .env.example .env`).
+Requires Docker. Settings come from `NEXTPAY_*` environment variables, or from `.env` at the
+repo root (git-ignored), which is read wherever you start the API or Alembic. Copy
+`.env.example` to `.env` once for local defaults (PowerShell: `Copy-Item .env.example .env`).
+The API refuses to start without the required settings, and names the missing ones.
 
 ```bash
 docker compose -f infra/docker-compose.yml up -d --wait   # PostgreSQL 17 on localhost:5432

@@ -61,13 +61,26 @@ New-NetFirewallRule -DisplayName "NextPay dev (API and Metro)" -Direction Inboun
 
 To undo the rule: `Remove-NetFirewallRule -DisplayName "NextPay dev (API and Metro)"`.
 
-**Each session**, open two terminals. Each one starts by changing to the folder its command
-needs, so it doesn't matter where the terminal opens.
-
-Terminal 1, the API. `--host 0.0.0.0` makes it reachable from outside this PC:
+**Once per clone**, create the API's settings file. `.env` is git-ignored, and the API reads
+it from the repo root wherever you start it. Without it, the API refuses to start and names
+the missing settings.
 
 ```powershell
 cd C:\Users\thead\Downloads\nextpay-phase0\nextpay
+Copy-Item .env.example .env
+```
+
+**Each session**, start Docker Desktop, then open two terminals. Each one starts by changing
+to the folder its command needs, so it doesn't matter where the terminal opens.
+
+Terminal 1, the database, then the API. The migration step does nothing when the schema is
+current, so it's safe every time, and it's required after pulling a new migration.
+`--host 0.0.0.0` makes the API reachable from outside this PC:
+
+```powershell
+cd C:\Users\thead\Downloads\nextpay-phase0\nextpay
+docker compose -f infra/docker-compose.yml up -d --wait
+uv run alembic -c backend/alembic.ini upgrade head
 uv run fastapi dev backend/app/main.py --host 0.0.0.0
 ```
 

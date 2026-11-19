@@ -1,9 +1,33 @@
+from collections.abc import Iterator
+from pathlib import Path
+
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from app.core.config import DatabaseSettings, Settings, get_settings
+from app.core import config
+from app.core.config import (
+    DatabaseSettings,
+    Settings,
+    SettingsError,
+    get_database_settings,
+    get_settings,
+)
+from app.main import app
 
 SECRET = "s" * 32
+DATABASE_URL = "postgresql+psycopg://u:p@db:5432/nextpay"
+
+
+@pytest.fixture(autouse=True)
+def no_env_file(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """A developer's real .env must not change these tests' results."""
+    monkeypatch.setattr(config, "ENV_FILE", None)
+    get_settings.cache_clear()
+    get_database_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+    get_database_settings.cache_clear()
 
 
 def test_settings_read_the_prefixed_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -56,3 +80,57 @@ def test_get_settings_reads_the_environment_once(monkeypatch: pytest.MonkeyPatch
         assert get_settings() is settings
     finally:
         get_settings.cache_clear()
+
+
+def test_a_missing_setting_names_the_variable_and_the_fix(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NEXTPAY_DATABASE_URL", raising=False)
+    monkeypatch.setenv("NEXTPAY_JWT_SECRET", SECRET)
+    with pytest.raises(SettingsError) as raised:
+        get_settings()
+    message = str(raised.value)
+    assert "NEXTPAY_DATABASE_URL: Field required" in message
+    assert "Copy-Item .env.example .env" in message
+    assert "JWT_SECRET" not in message  # only what is actually wrong
+
+
+def test_a_rejected_value_is_never_echoed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEXTPAY_DATABASE_URL", DATABASE_URL)
+    monkeypatch.setenv("NEXTPAY_JWT_SECRET", "short-but-secret")
+    with pytest.raises(SettingsError, match="NEXTPAY_JWT_SECRET") as raised:
+        get_settings()
+    assert "short-but-secret" not in str(raised.value)
+
+
+def test_migrations_get_the_same_clear_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NEXTPAY_DATABASE_URL", raising=False)
+    with pytest.raises(SettingsError, match="NEXTPAY_DATABASE_URL"):
+        get_database_settings()
+
+
+def test_the_env_file_is_read_and_the_environment_wins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "\n".join([f"NEXTPAY_DATABASE_URL={DATABASE_URL}", f"NEXTPAY_JWT_SECRET={'f' * 32}"])
+    )
+    monkeypatch.setattr(config, "ENV_FILE", env_file)
+    monkeypatch.delenv("NEXTPAY_DATABASE_URL", raising=False)
+    monkeypatch.setenv("NEXTPAY_JWT_SECRET", SECRET)
+    settings = get_settings()
+    assert str(settings.database_url) == DATABASE_URL
+    assert settings.jwt_secret.get_secret_value() == SECRET
+
+
+def test_the_api_refuses_to_start_without_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NEXTPAY_DATABASE_URL", raising=False)
+    monkeypatch.setenv("NEXTPAY_JWT_SECRET", SECRET)
+    with pytest.raises(SettingsError, match="NEXTPAY_DATABASE_URL"), TestClient(app):
+        pass  # entering the client runs startup
+
+
+def test_the_api_starts_with_valid_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NEXTPAY_DATABASE_URL", DATABASE_URL)
+    monkeypatch.setenv("NEXTPAY_JWT_SECRET", SECRET)
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
