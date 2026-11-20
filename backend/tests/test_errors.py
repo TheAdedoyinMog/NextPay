@@ -3,7 +3,7 @@
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from app.api.errors import install_error_handlers
 from app.core.errors import (
@@ -22,6 +22,8 @@ class _UnmappedError(DomainError):
 
 
 class _Body(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str
 
 
@@ -73,6 +75,17 @@ def test_a_missing_body_is_a_validation_error(client: TestClient) -> None:
     assert response.json()["error"] == {
         "code": "validation_error",
         "message": "Check these fields: body",
+        "fields": {"body": "Field required"},
+    }
+
+
+def test_a_validation_error_says_what_is_wrong_with_each_field(client: TestClient) -> None:
+    response = client.post("/echo", json={"name": 12, "extra": "x"})
+    error = response.json()["error"]
+    assert error["message"] == "Check these fields: extra, name"
+    assert error["fields"] == {
+        "extra": "Extra inputs are not permitted",
+        "name": "Input should be a valid string",
     }
 
 

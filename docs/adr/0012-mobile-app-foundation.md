@@ -32,7 +32,9 @@ calculated (ADR 0001, ground rule 1).
   `ApiError` with the backend's `code` and `message`, or `network_error` when no response
   arrived. A validation `message` already names the bad fields, so it reaches the user
   intact. That is how a missing nullable field on `PUT` stays obvious (ADR 0010): the types
-  demand `T | null`, and a 422 says which field.
+  demand `T | null`, and a 422 says which field. *(ADR 0014 adds `ApiError.fields`, so the
+  app shows each problem next to its field, and replaces a raw 5xx status with a friendly
+  message.)*
 
 ### Client state
 - **TanStack Query holds server state.** Query hooks are written by hand per feature in

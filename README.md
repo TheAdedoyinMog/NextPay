@@ -64,7 +64,9 @@ with `/auth/register` or `/auth/login`, then send the access token as a Bearer t
 | `/bills/{id}/payments`, `/debts/{id}/payments` | `POST`, `GET` |
 
 Money is integer cents. `PUT` replaces the whole resource, so every field is required and
-a nullable one must be sent as `null`. Conventions and delete rules: ADR 0010.
+a nullable one must be sent as `null`. Conventions and delete rules: ADR 0010. A 422
+`validation_error` also lists each rejected field in `error.fields`, with what was wrong
+(ADR 0014).
 
 A payday goes like this: enter your balance (`POST /balance-snapshots`), find the paycheck
 (`GET /paychecks`), plan it (`POST /plans`), and commit the plan. Committing sets aside

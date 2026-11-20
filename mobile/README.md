@@ -1,8 +1,9 @@
 # NextPay mobile
 
 The Expo + React Native + TypeScript app. Decisions are in
-[ADR 0012](../docs/adr/0012-mobile-app-foundation.md) (foundation) and
-[ADR 0013](../docs/adr/0013-mobile-sessions.md) (sign-in and sessions).
+[ADR 0012](../docs/adr/0012-mobile-app-foundation.md) (foundation),
+[ADR 0013](../docs/adr/0013-mobile-sessions.md) (sign-in and sessions) and
+[ADR 0014](../docs/adr/0014-mobile-setup-screens.md) (setup screens, onboarding, navigation).
 
 Requires Node 22.13+ or 24.3+ (`.nvmrc` pins 24) and, for the API types,
 [uv](https://docs.astral.sh/uv/). Run `uv sync --all-packages` once at the repo root.
@@ -26,14 +27,26 @@ npm run api:check      # fails if the committed types are out of date (CI runs t
 ```
 src/app/             Routes. Expo Router makes every file here a route, so tests go elsewhere.
   (auth)/            Sign-in and sign-up: only reachable when signed out
-  (app)/             Everything else: only reachable when signed in
+  (app)/             Signed in: onboarding (no income yet), or the tabs
+    (tabs)/          Home, and Setup with its own stack of lists and forms
 src/api/client.ts    The only HTTP code: base URL, auth header, refresh-and-retry, timeout, ApiError
 src/api/session.ts   Tokens (refresh token in the Keychain, access token in memory) and refresh
 src/api/schema.d.ts  Generated from the backend. Never edit by hand.
-src/features/<name>/ Each feature's query hooks (api.ts) and components
-src/lib/             formatCents, the only money code in the app
-src/test/            Test helpers: a fake backend with real refresh rotation, a fake Keychain
+src/components/      Shared UI: form fields, date and select pickers, buttons, screen states
+src/features/<name>/ Each feature's query hooks (api.ts), form and screens
+src/lib/             Display and input conversion: formatCents, parseMoney, calendar dates
+src/test/            Test helpers: a fake backend (refresh rotation, in-memory resources), a
+                     fake Keychain, and helpers to launch the whole app or render hooks
 ```
+
+**Money and dates in forms.** Amounts are typed as text and turned into cents by
+`parseMoney`, which reads the digits and never uses a float. Due dates and deadlines stay
+`"YYYY-MM-DD"` strings; never pass one to `new Date()`. Jest runs in America/Indiana, so a
+date shown a day early fails a test.
+
+**After a change.** Every setup mutation calls `invalidateAfterSetupChange`, which refetches
+that resource and marks every `['planning', ...]` query stale. Plan and paycheck queries
+(3D) must start with `['planning']`.
 
 A feature's hook looks like `useQuery({ queryKey, queryFn: () => unwrap(api.GET('/path')) })`.
 `unwrap` returns the typed data or throws an `ApiError` with the backend's `code` and `message`.

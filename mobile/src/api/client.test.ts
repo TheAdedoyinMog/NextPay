@@ -88,10 +88,61 @@ describe('errors', () => {
     });
   });
 
-  it('copes with an error body that is not the envelope', async () => {
-    fetchMock.mockResolvedValue(new Response('<html>Bad gateway</html>', { status: 502 }));
+  it('keeps the per-field problems of a 422', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(422, {
+        error: {
+          code: 'validation_error',
+          message: 'Check these fields: amount_cents',
+          fields: { amount_cents: 'Input should be greater than 0' },
+        },
+      }),
+    );
 
-    await expect(getHealth()).rejects.toMatchObject({ status: 502, code: 'http_error' });
+    await expect(getHealth()).rejects.toMatchObject({
+      fields: { amount_cents: 'Input should be greater than 0' },
+    });
+  });
+
+  it('has no fields for other errors', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(409, { error: { code: 'conflict', message: 'Not now.' } }),
+    );
+
+    await expect(getHealth()).rejects.toMatchObject({ fields: {} });
+  });
+
+  it.each([500, 502, 503])(
+    'shows a friendly message for a %d without the envelope, never the status',
+    async (status) => {
+      fetchMock.mockResolvedValue(new Response('Internal Server Error', { status }));
+
+      const error = await getHealth().catch((e: unknown) => e);
+
+      expect(error).toMatchObject({
+        status,
+        code: 'http_error',
+        message: 'Something went wrong on our side. Try again in a moment.',
+      });
+      expect(errorMessage(error)).not.toMatch(/status|\d{3}/);
+    },
+  );
+
+  it('keeps the backend’s own message when a 5xx has the envelope', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(503, { error: { code: 'maintenance', message: 'Back in five minutes.' } }),
+    );
+
+    await expect(getHealth()).rejects.toMatchObject({ message: 'Back in five minutes.' });
+  });
+
+  it('gives a generic message for a 4xx without the envelope', async () => {
+    fetchMock.mockResolvedValue(new Response('nope', { status: 418 }));
+
+    await expect(getHealth()).rejects.toMatchObject({
+      status: 418,
+      message: 'Something went wrong. Try again.',
+    });
   });
 
   it('names the address when no response arrives', async () => {

@@ -156,6 +156,22 @@ def test_invalid_bodies_are_rejected(
     assert field in assert_error(response, 422, "validation_error")["message"]
 
 
+def test_a_validation_error_names_each_field_with_its_problem(
+    client: TestClient, ada: Headers
+) -> None:
+    body = {
+        **JOB,
+        "expected_amount_cents": 0,
+        "schedule": {"type": "weekly", "anchor_date": "2026-02-30"},
+    }
+    error = assert_error(
+        client.post("/income-sources", json=body, headers=ada), 422, "validation_error"
+    )
+    # A schedule's path includes its type, as Pydantic reports a tagged union.
+    assert set(error["fields"]) == {"expected_amount_cents", "schedule.weekly.anchor_date"}
+    assert error["fields"]["expected_amount_cents"] == "Input should be greater than 0"
+
+
 def test_list_is_ordered_by_name(client: TestClient, ada: Headers) -> None:
     weekend = create(client, ada, name="Weekend job")
     day = create(client, ada)

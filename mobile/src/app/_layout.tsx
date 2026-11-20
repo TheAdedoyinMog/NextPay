@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 
 import { createQueryClient } from '@/api/queryClient';
 import { SessionProvider, useSession } from '@/features/auth/SessionProvider';
+import { OnboardingProvider } from '@/features/onboarding/OnboardingGate';
 
 // Keep the native splash up until we know whether someone is signed in.
 void SplashScreen.preventAutoHideAsync();
@@ -14,7 +15,9 @@ export default function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
       <SessionProvider>
-        <RootNavigator />
+        <OnboardingProvider>
+          <RootNavigator />
+        </OnboardingProvider>
       </SessionProvider>
     </QueryClientProvider>
   );

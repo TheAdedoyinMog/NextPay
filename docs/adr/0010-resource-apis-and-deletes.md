@@ -21,7 +21,7 @@ and ADR 0003 says deleting a goal releases its reserve without saying what "rele
   "clear this". Every request field is therefore required, including nullable ones
   (`repeat_every_months`, `deadline`), which must be sent as `null`. A test keeps them
   `required` in the OpenAPI schema so a generated client types them `T | null`, not
-  optional.
+  optional. *(Added by ADR 0014: a 422 also names each field in `fields`.)*
 - **Not found means not yours.** Another user's id and an id that does not exist return
   the same 404 body (ADR 0006). One test per verb proves it for every resource.
 - **Validation has three layers.** The request schema checks shape and single fields and

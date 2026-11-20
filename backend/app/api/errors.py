@@ -50,12 +50,19 @@ def status_for(error: DomainError) -> int:
 
 
 def error_response(
-    status_code: int, code: str, message: str, headers: Mapping[str, str] | None = None
+    status_code: int,
+    code: str,
+    message: str,
+    headers: Mapping[str, str] | None = None,
+    fields: dict[str, str] | None = None,
 ) -> JSONResponse:
-    body = ErrorResponse(error=ErrorBody(code=code, message=message))
+    body = ErrorResponse(error=ErrorBody(code=code, message=message, fields=fields))
     if status_code == status.HTTP_401_UNAUTHORIZED:
         headers = {"WWW-Authenticate": "Bearer", **(headers or {})}
-    return JSONResponse(body.model_dump(), status_code=status_code, headers=headers)
+    # `fields` is left out, not null, when there are none.
+    return JSONResponse(
+        body.model_dump(exclude_none=True), status_code=status_code, headers=headers
+    )
 
 
 async def _domain_error(_: Request, error: Exception) -> JSONResponse:
@@ -65,12 +72,20 @@ async def _domain_error(_: Request, error: Exception) -> JSONResponse:
 
 async def _validation_error(_: Request, error: Exception) -> JSONResponse:
     assert isinstance(error, RequestValidationError)
-    # Name the fields, not their values: a rejected password must never be echoed.
-    fields = sorted(
-        {".".join(str(part) for part in e["loc"][1:]) or str(e["loc"][0]) for e in error.errors()}
+    # Name the fields, not their values: a rejected password must never be echoed. Pydantic's
+    # `msg` states the rule ("Input should be greater than 0"); the value is only in `input`.
+    fields: dict[str, str] = {}
+    for e in error.errors():
+        path = ".".join(str(part) for part in e["loc"][1:]) or str(e["loc"][0])
+        fields.setdefault(path, str(e["msg"]))  # the first problem with a field is enough
+    names = sorted(fields)
+    message = "Check these fields: " + ", ".join(names) if names else "The request is invalid."
+    return error_response(
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        "validation_error",
+        message,
+        fields={name: fields[name] for name in names} or None,
     )
-    message = "Check these fields: " + ", ".join(fields) if fields else "The request is invalid."
-    return error_response(status.HTTP_422_UNPROCESSABLE_CONTENT, "validation_error", message)
 
 
 async def _http_error(_: Request, error: Exception) -> JSONResponse:

@@ -38,11 +38,26 @@ function launch(initialUrl = '/') {
   return renderRouter('src/app', { initialUrl });
 }
 
-/** The phone already holds a session from an earlier run. */
+/** The account is past onboarding: it has an income source. */
+function seedIncome(email = 'ada@example.com', name = 'Acme payroll') {
+  backend.seed(email, '/income-sources', {
+    name,
+    expected_amount_cents: 150000,
+    schedule: { type: 'biweekly', anchor_date: '2026-11-20' },
+  });
+}
+
+/** The phone already holds a session from an earlier run, for an account that is set up. */
 function rememberSession() {
+  seedIncome();
   const tokens = backend.issueSession('ada@example.com');
   keychain.items.set(keychain.REFRESH_TOKEN_KEY, tokens.refresh_token);
   return tokens;
+}
+
+/** Opens the Setup tab, where the account and Log out live. */
+async function openSetupTab() {
+  await fireEvent.press(await screen.findByRole('button', { name: /^Setup, tab/ }));
 }
 
 async function fillIn(email: string, password: string) {
@@ -70,7 +85,7 @@ describe('launch', () => {
 
     await launch();
 
-    expect(await screen.findByText('Signed in as ada@example.com')).toBeTruthy();
+    expect(await screen.findByText('Acme payroll')).toBeTruthy();
     expect(screen).toHavePathname('/');
   });
 
@@ -94,9 +109,10 @@ describe('launch', () => {
 
     await launch();
 
-    const alert = await screen.findByRole('alert', undefined, { timeout: 5000 });
-    expect(alert).toHaveTextContent('Could not reach the server at http://api.test.');
-    expect(screen.getByText('You’re still signed in.')).toBeTruthy();
+    // Each section of Home reports it, after one retry.
+    const alerts = await screen.findAllByRole('alert', undefined, { timeout: 10000 });
+    expect(alerts[0]).toHaveTextContent('Could not reach the server at http://api.test.');
+    expect(screen.getAllByText('You’re still signed in.').length).toBeGreaterThan(0);
     expect(screen).toHavePathname('/');
     expect(keychain.items.size).toBe(1);
   });
@@ -127,13 +143,26 @@ describe('route guards', () => {
 
     await launch('/sign-up');
 
-    expect(await screen.findByText('Signed in as ada@example.com')).toBeTruthy();
+    expect(await screen.findByText('Acme payroll')).toBeTruthy();
     expect(screen).toHavePathname('/');
   });
 });
 
 describe('flows', () => {
-  it('signs in and lands in the app', async () => {
+  it('signs in and lands on Home when the account is set up', async () => {
+    backend.addUser('ada@example.com', 'correct horse battery');
+    seedIncome();
+    await launch();
+    await screen.findByRole('button', { name: 'Sign in' });
+
+    await fillIn('ada@example.com', 'correct horse battery');
+    await fireEvent.press(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(await screen.findByText('Acme payroll')).toBeTruthy();
+    expect(screen).toHavePathname('/');
+  });
+
+  it('signs in to onboarding when the account has no income yet', async () => {
     backend.addUser('ada@example.com', 'correct horse battery');
     await launch();
     await screen.findByRole('button', { name: 'Sign in' });
@@ -141,8 +170,8 @@ describe('flows', () => {
     await fillIn('ada@example.com', 'correct horse battery');
     await fireEvent.press(screen.getByRole('button', { name: 'Sign in' }));
 
-    expect(await screen.findByText('Signed in as ada@example.com')).toBeTruthy();
-    expect(screen).toHavePathname('/');
+    expect(await screen.findByText('When do you get paid?')).toBeTruthy();
+    expect(screen).toHavePathname('/onboarding');
   });
 
   it('shows wrong credentials on the sign-in screen', async () => {
@@ -166,12 +195,13 @@ describe('flows', () => {
 
     await fillIn('new@example.com', 'a long passphrase');
     await fireEvent.press(screen.getByRole('button', { name: 'Create account' }));
-    expect(await screen.findByText('Signed in as new@example.com')).toBeTruthy();
+    expect(await screen.findByText('When do you get paid?')).toBeTruthy();
   });
 
   it('logs out back to sign-in, ending the session on the backend', async () => {
     const tokens = rememberSession();
     await launch();
+    await openSetupTab();
     await screen.findByText('Signed in as ada@example.com');
 
     await fireEvent.press(screen.getByRole('button', { name: 'Log out' }));
@@ -185,8 +215,10 @@ describe('flows', () => {
 
   it('shows the next account none of the previous account’s data', async () => {
     backend.addUser('grace@example.com', 'another long passphrase');
+    seedIncome('grace@example.com', 'Grace’s studio');
     rememberSession();
     await launch();
+    await openSetupTab();
     await screen.findByText('Signed in as ada@example.com');
     await fireEvent.press(screen.getByRole('button', { name: 'Log out' }));
     await screen.findByRole('button', { name: 'Sign in' });
@@ -194,7 +226,8 @@ describe('flows', () => {
     await fillIn('grace@example.com', 'another long passphrase');
     await fireEvent.press(screen.getByRole('button', { name: 'Sign in' }));
 
-    expect(await screen.findByText('Signed in as grace@example.com')).toBeTruthy();
+    expect(await screen.findByText('Grace’s studio')).toBeTruthy();
+    expect(screen.queryByText('Acme payroll')).toBeNull();
     expect(screen.queryByText('Signed in as ada@example.com')).toBeNull();
   });
 });

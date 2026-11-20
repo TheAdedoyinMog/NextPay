@@ -10,6 +10,10 @@ import type { components, paths } from './schema';
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
+/** A 5xx is never the user's fault, and a raw status code reads as broken. */
+export const SERVER_ERROR_MESSAGE = 'Something went wrong on our side. Try again in a moment.';
+const UNEXPECTED_ERROR_MESSAGE = 'Something went wrong. Try again.';
+
 type ErrorResponse = components['schemas']['ErrorResponse'];
 
 export class ApiError extends Error {
@@ -19,6 +23,11 @@ export class ApiError extends Error {
     /** The backend's error code, such as `validation_error`, or `network_error` / `timeout`. */
     readonly code: string,
     message: string,
+    /**
+     * On a 422 `validation_error`: each rejected field's dotted path (such as `amount_cents` or
+     * `schedule.weekly.anchor_date`) with what was wrong. Empty otherwise.
+     */
+    readonly fields: Readonly<Record<string, string>> = {},
   ) {
     super(message);
     this.name = 'ApiError';
@@ -126,18 +135,17 @@ export async function unwrap<T>(
   const { data, error, response } = result;
   if (!response.ok) {
     if (isErrorResponse(error)) {
-      throw new ApiError(response.status, error.error.code, error.error.message);
+      const { code, message, fields } = error.error;
+      throw new ApiError(response.status, code, message, fields ?? {});
     }
-    throw new ApiError(
-      response.status,
-      'http_error',
-      `The request failed with status ${response.status}.`,
-    );
+    // No envelope: a crash, a proxy, or a gateway. The status stays on the error for tests.
+    const message = response.status >= 500 ? SERVER_ERROR_MESSAGE : UNEXPECTED_ERROR_MESSAGE;
+    throw new ApiError(response.status, 'http_error', message);
   }
   return data as T;
 }
 
 /** A message that is safe to show: the backend's own, or the client's for no response. */
 export function errorMessage(error: unknown): string {
-  return error instanceof ApiError ? error.message : 'Something went wrong. Try again.';
+  return error instanceof ApiError ? error.message : UNEXPECTED_ERROR_MESSAGE;
 }

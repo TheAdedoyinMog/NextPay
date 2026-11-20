@@ -854,6 +854,13 @@ export interface components {
             code: string;
             /** Message */
             message: string;
+            /**
+             * Fields
+             * @description Validation errors only: each rejected field's dotted path, as in `message`, with what was wrong. Never contains the submitted value.
+             */
+            fields?: {
+                [key: string]: string;
+            } | null;
         };
         /** ErrorResponse */
         ErrorResponse: {
