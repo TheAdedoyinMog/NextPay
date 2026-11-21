@@ -40,6 +40,10 @@ class BillPayment(UserOwnedMixin, TimestampsMixin, Base):
         tenant_fk("bill_id", "bills", ondelete="CASCADE"),
         Index("ix_bill_payments_bill_id_due_date", "bill_id", "due_date"),
         CheckConstraint("amount_cents > 0", name="amount_positive"),
+        CheckConstraint(
+            "reserve_drawn_cents >= 0 AND reserve_drawn_cents <= amount_cents",
+            name="reserve_drawn_range",
+        ),
     )
 
     bill_id: Mapped[uuid.UUID]
@@ -47,3 +51,6 @@ class BillPayment(UserOwnedMixin, TimestampsMixin, Base):
     due_date: Mapped[date]
     paid_on: Mapped[date]
     amount_cents: Mapped[Cents]
+    # How much of the payment came out of its reserve; the rest came out of Safe to Spend.
+    # Sorted after the timestamps because a migration added it to the table's end.
+    reserve_drawn_cents: Mapped[Cents] = mapped_column(sort_order=3)

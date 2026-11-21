@@ -6,14 +6,27 @@ import { parseMoney } from '@/lib/money';
 
 type Props = {
   submitLabel: string;
+  /** What the field starts with, such as the last balance as text. */
+  initialText?: string;
+  label?: string;
+  hint?: string;
   isPending: boolean;
   error: unknown;
   onSubmit: (amountCents: number) => void;
   children?: ReactNode;
 };
 
-export function BalanceForm({ submitLabel, isPending, error, onSubmit, children }: Props) {
-  const [amount, setAmount] = useState('');
+export function BalanceForm({
+  submitLabel,
+  initialText = '',
+  label = 'Available balance',
+  hint = "What your account shows right now. Use a minus sign if it's overdrawn.",
+  isPending,
+  error,
+  onSubmit,
+  children,
+}: Props) {
+  const [amount, setAmount] = useState(initialText);
   const [local, setLocal] = useState<{ amount?: string }>({});
   const shown = mergeErrors(local, formErrors(error, { amount_cents: 'amount' }));
   const submit = () => {
@@ -27,11 +40,11 @@ export function BalanceForm({ submitLabel, isPending, error, onSubmit, children 
   return (
     <>
       <MoneyField
-        label="Available balance"
+        label={label}
         value={amount}
         onChangeText={setAmount}
         allowNegative
-        hint="What your account shows right now. Use a minus sign if it's overdrawn."
+        hint={hint}
         error={shown.fields.amount}
       />
       <FormError message={shown.form} />

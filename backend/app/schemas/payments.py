@@ -15,6 +15,17 @@ from app.schemas.common import IsoDate, PositiveCents, RequestModel
 
 
 class BillPaymentRequest(RequestModel):
+    id: Annotated[
+        uuid.UUID | None,
+        Field(
+            description=(
+                "A new id the client makes for this payment, so a retry can't record it twice: "
+                "a payment with this id for the same bill is returned as it is (200) and nothing "
+                "changes. Used for anything else: 409 `payment_id_conflict`. Left out: the "
+                "server makes one, and a retry records a second payment."
+            )
+        ),
+    ] = None
     amount_cents: Annotated[
         PositiveCents | None, Field(description="Left out: the bill's full amount.")
     ] = None
@@ -46,6 +57,17 @@ class BillPaymentListResponse(BaseModel):
 
 
 class DebtPaymentRequest(RequestModel):
+    id: Annotated[
+        uuid.UUID | None,
+        Field(
+            description=(
+                "A new id the client makes for this payment, so a retry can't record it twice: "
+                "a payment with this id for the same debt is returned as it is (200) and nothing "
+                "changes. Used for anything else: 409 `payment_id_conflict`. Left out: the "
+                "server makes one, and a retry records a second payment."
+            )
+        ),
+    ] = None
     amount_cents: Annotated[
         PositiveCents | None,
         Field(description="Left out: the minimum payment, or the whole balance if that is less."),

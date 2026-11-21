@@ -24,6 +24,13 @@ class PlanSummaryResponse(BaseModel):
     version: int
     status: PlanStatus
     safe_to_spend_cents: int
+    is_out_of_date: bool = Field(
+        description=(
+            "A draft whose details have changed since it was made: committing it would be "
+            "refused with 409 `plan_out_of_date`, so generate it again. Always false for a "
+            "committed or superseded plan."
+        )
+    )
 
 
 class PaycheckResponse(BaseModel):

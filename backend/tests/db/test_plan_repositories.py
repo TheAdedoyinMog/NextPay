@@ -1,7 +1,7 @@
 """PlanRepository and ReserveRepository against a real PostgreSQL."""
 
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -254,6 +254,7 @@ def test_a_bills_payments_are_listed_newest_first_for_its_owner_only(
                 due_date=date(2026, 10, 20),
                 paid_on=date(2026, 10, day),
                 amount_cents=10_000,
+                reserve_drawn_cents=0,
             )
         )
 
@@ -278,6 +279,7 @@ def test_a_debts_payments_are_listed_newest_first_for_its_owner_only(
                 debt_id=setup.car.id,
                 paid_on=date(2026, 10, day),
                 amount_cents=15_000,
+                reserve_drawn_cents=0,
             )
         )
 
@@ -319,3 +321,42 @@ def test_a_reserve_is_found_by_its_target_for_its_owner_only(
     assert reserves.find(bob.user.id, ReserveKind.BILL, ada.rent.id) is None
     assert set(reserves.list_for(ada.user.id)) == {for_rent, for_car, for_camera}
     assert len(reserves.list_for(bob.user.id)) == 1
+
+
+def test_what_payments_paid_beyond_their_reserves_is_summed_from_an_instant(
+    db_session: Session, ada: Setup, bob: Setup
+) -> None:
+    bills, debts = BillPaymentRepository(db_session), DebtPaymentRepository(db_session)
+    since = datetime(2026, 10, 7, 12, tzinfo=UTC)
+
+    def bill_paid(setup: Setup, at: datetime, amount: int, drawn: int) -> None:
+        bills.add(
+            BillPayment(
+                user_id=setup.user.id,
+                bill_id=setup.rent.id,
+                due_date=date(2026, 10, 20),
+                paid_on=at.date(),
+                amount_cents=amount,
+                reserve_drawn_cents=drawn,
+                created_at=at,
+            )
+        )
+
+    bill_paid(ada, since - timedelta(seconds=1), 9_000, 0)  # before: not counted
+    bill_paid(ada, since, 10_000, 4_000)  # at the instant: 6,000 beyond
+    bill_paid(ada, since + timedelta(days=1), 5_000, 5_000)  # covered: nothing beyond
+    bill_paid(bob, since, 7_000, 0)  # someone else's
+    debts.add(
+        DebtPayment(
+            user_id=ada.user.id,
+            debt_id=ada.car.id,
+            paid_on=since.date(),
+            amount_cents=15_000,
+            reserve_drawn_cents=7_500,
+            created_at=since + timedelta(hours=1),
+        )
+    )
+
+    assert bills.unreserved_since(ada.user.id, since) == 6_000
+    assert debts.unreserved_since(ada.user.id, since) == 7_500
+    assert debts.unreserved_since(bob.user.id, since) == 0

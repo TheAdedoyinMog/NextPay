@@ -8,7 +8,7 @@ same draft is returned. Committing a draft turns what it funded into reserves
 """
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import date
 from typing import Protocol
 
@@ -164,7 +164,30 @@ class PlanService:
         assert paycheck is not None  # a plan cannot outlive its paycheck (RESTRICT)
         source = self._income_sources.get_including_archived(user.id, paycheck.income_source_id)
         assert source is not None  # nor a paycheck its source
-        return self._details(plan, paycheck, source)
+        stale = plan.id in self.out_of_date(user, [(plan, paycheck)])
+        return self._details(plan, paycheck, source, is_out_of_date=stale)
+
+    def out_of_date(
+        self, user: User, plans: Iterable[tuple[PaycheckPlan, Paycheck]]
+    ) -> set[uuid.UUID]:
+        """The ids of the drafts among ``plans`` that commit would refuse as out of date.
+
+        A committed or superseded plan is never out of date: it is final, or already
+        replaced. The state is loaded once however many drafts there are.
+        """
+        drafts = [(plan, paycheck) for plan, paycheck in plans if plan.status is PlanStatus.DRAFT]
+        if not drafts:
+            return set()
+        state = self._state.load(user).state
+        return {plan.id for plan, paycheck in drafts if self._is_stale(user, state, plan, paycheck)}
+
+    def _is_stale(
+        self, user: User, state: engine.FinancialState, plan: PaycheckPlan, paycheck: Paycheck
+    ) -> bool:
+        """Whether the engine would no longer give ``plan``'s answer, as of its own day."""
+        if self._income_sources.get(user.id, paycheck.income_source_id) is None:
+            return True  # archived since
+        return input_hash(state, to_engine_paycheck(paycheck), plan.as_of) != plan.input_hash
 
     def commit(self, user: User, plan_id: uuid.UUID) -> PlanDetails:
         """Accept a draft: what it funded becomes reserves (ADR 0003).
@@ -196,10 +219,7 @@ class PlanService:
         if any(other.status is PlanStatus.COMMITTED for other in versions):
             raise PaycheckAlreadyCommittedError()
         source = self._income_sources.get(user.id, paycheck.income_source_id)
-        if source is None:
-            raise PlanOutOfDateError()
-        inputs = self._state.load(user)
-        if input_hash(inputs.state, to_engine_paycheck(paycheck), plan.as_of) != plan.input_hash:
+        if source is None or self._is_stale(user, self._state.load(user).state, plan, paycheck):
             raise PlanOutOfDateError()
 
         for line in self._plans.allocations(user.id, plan.id):
@@ -222,11 +242,19 @@ class PlanService:
             assert goal is not None
             goal.current_cents += line.funded_cents
 
-    def _details(self, plan: PaycheckPlan, paycheck: Paycheck, source: IncomeSource) -> PlanDetails:
+    def _details(
+        self,
+        plan: PaycheckPlan,
+        paycheck: Paycheck,
+        source: IncomeSource,
+        *,
+        is_out_of_date: bool = False,
+    ) -> PlanDetails:
         return describe(
             plan,
             paycheck,
             source,
             self._plans.allocations(plan.user_id, plan.id),
             self._plans.projections(plan.user_id, plan.id),
+            is_out_of_date=is_out_of_date,
         )

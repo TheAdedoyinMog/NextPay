@@ -7,6 +7,7 @@ from app.api import (
     auth,
     balances,
     bills,
+    dashboard,
     debts,
     essential_expenses,
     goals,
@@ -46,6 +47,7 @@ app.include_router(balances.router)
 app.include_router(paychecks.router)
 app.include_router(plans.router)
 app.include_router(payments.router)
+app.include_router(dashboard.router)
 
 
 @app.get("/health")

@@ -220,6 +220,7 @@ def test_delete_takes_the_bills_payments_and_releases_its_reserve(
                 due_date=date(2026, 10, 20),
                 paid_on=date(2026, 10, 19),
                 amount_cents=80_000,
+                reserve_drawn_cents=40_000,
             )
         )
         db_session.add(

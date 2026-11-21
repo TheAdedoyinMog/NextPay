@@ -43,6 +43,14 @@ export async function settle() {
   clients.length = 0;
 }
 
+/**
+ * What every setup mutation does on success (invalidateAfterSetupChange): marks planning
+ * queries stale, so open screens refetch. For a change made elsewhere, such as another device.
+ */
+export async function setupChangedElsewhere() {
+  await Promise.all(clients.map((client) => client.invalidateQueries({ queryKey: ['planning'] })));
+}
+
 /** The app's real query client, minus the cache-cleanup timer that would outlive each test. */
 export function queryClientMock() {
   const actual = jest.requireActual('@/api/queryClient');

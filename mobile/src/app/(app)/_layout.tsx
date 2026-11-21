@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { LoadingState } from '@/components/screens';
 import { colors } from '@/components/theme';
+import { useTimeZoneSync } from '@/features/account/timezone';
 import { useOnboardingDecision } from '@/features/onboarding/OnboardingGate';
 
 /**
@@ -11,6 +12,7 @@ import { useOnboardingDecision } from '@/features/onboarding/OnboardingGate';
  */
 export default function AppLayout() {
   const decision = useOnboardingDecision();
+  useTimeZoneSync();
   const isOnboarding = decision === 'onboarding';
 
   return (
@@ -21,6 +23,8 @@ export default function AppLayout() {
         </Stack.Protected>
         <Stack.Protected guard={!isOnboarding} redirectTo="/onboarding">
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="payday" options={{ title: 'Plan your paycheck' }} />
+          <Stack.Screen name="plan/[id]" options={{ title: 'Your plan' }} />
         </Stack.Protected>
       </Stack>
       {decision === 'deciding' ? (

@@ -1,6 +1,6 @@
 /**
- * What's set up, at a glance. 3D puts the next paycheck's plan above this. Nothing here adds
- * anything up: every amount is shown as the API stored it (ADR 0012).
+ * The dashboard (Safe to Spend, the paycheck to act on, the balance), then what's set up.
+ * Nothing here adds anything up: every amount is shown as the API gives it (ADR 0012).
  */
 import type { UseQueryResult } from '@tanstack/react-query';
 import { type Href, useRouter } from 'expo-router';
@@ -10,7 +10,6 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ActionButton } from '@/components/form';
 import { ErrorState, ListRow, LoadingState, Screen } from '@/components/screens';
 import { colors, spacing } from '@/components/theme';
-import { currentBalance, useBalanceSnapshots } from '@/features/balance/api';
 import { useBills } from '@/features/bills/api';
 import { describeBill } from '@/features/bills/labels';
 import { useDebts } from '@/features/debts/api';
@@ -20,7 +19,7 @@ import { useGoals } from '@/features/goals/api';
 import { describeGoal } from '@/features/goals/labels';
 import { useIncomeSources } from '@/features/income/api';
 import { describeSchedule } from '@/features/income/schedule';
-import { formatInstant } from '@/lib/dates';
+import { DashboardCards } from '@/features/payday/DashboardCards';
 import { formatCents } from '@/lib/formatCents';
 
 export function HomeScreen() {
@@ -33,7 +32,7 @@ export function HomeScreen() {
 
   return (
     <Screen>
-      <BalanceCard />
+      <DashboardCards />
 
       <Section title="Income" query={income} href="/setup/income" noun="income">
         {(items) =>
@@ -101,54 +100,6 @@ export function HomeScreen() {
         onPress={() => router.push('/setup')}
       />
     </Screen>
-  );
-}
-
-function BalanceCard() {
-  const router = useRouter();
-  const snapshots = useBalanceSnapshots();
-  const openBalance = () => router.push('/setup/balance');
-
-  return (
-    <View style={styles.card}>
-      <Text style={styles.cardLabel}>Available balance</Text>
-      {snapshots.isPending ? <LoadingState /> : null}
-      {snapshots.isError ? (
-        <ErrorState
-          error={snapshots.error}
-          isRetrying={snapshots.isFetching}
-          onRetry={() => snapshots.refetch()}
-        />
-      ) : null}
-      {snapshots.isSuccess ? (
-        <BalanceValue snapshot={currentBalance(snapshots.data)} onAdd={openBalance} />
-      ) : null}
-    </View>
-  );
-}
-
-function BalanceValue({
-  snapshot,
-  onAdd,
-}: {
-  snapshot: ReturnType<typeof currentBalance>;
-  onAdd: () => void;
-}) {
-  if (!snapshot) {
-    return (
-      <>
-        <Text style={styles.cardHint}>
-          No balance yet. Your plan starts from $0 until you add one.
-        </Text>
-        <ActionButton title="Add your balance" onPress={onAdd} />
-      </>
-    );
-  }
-  return (
-    <Pressable accessibilityRole="button" accessibilityLabel="Update balance" onPress={onAdd}>
-      <Text style={styles.balance}>{formatCents(snapshot.amount_cents)}</Text>
-      <Text style={styles.cardHint}>As of {formatInstant(snapshot.as_of)} · Tap to update</Text>
-    </Pressable>
   );
 }
 

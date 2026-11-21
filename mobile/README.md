@@ -3,7 +3,8 @@
 The Expo + React Native + TypeScript app. Decisions are in
 [ADR 0012](../docs/adr/0012-mobile-app-foundation.md) (foundation),
 [ADR 0013](../docs/adr/0013-mobile-sessions.md) (sign-in and sessions) and
-[ADR 0014](../docs/adr/0014-mobile-setup-screens.md) (setup screens, onboarding, navigation).
+[ADR 0014](../docs/adr/0014-mobile-setup-screens.md) (setup screens, onboarding, navigation) and
+[ADR 0015](../docs/adr/0015-payday-flow-and-idempotency.md) (the payday flow, repeat-safe actions).
 
 Requires Node 22.13+ or 24.3+ (`.nvmrc` pins 24) and, for the API types,
 [uv](https://docs.astral.sh/uv/). Run `uv sync --all-packages` once at the repo root.
@@ -47,6 +48,11 @@ date shown a day early fails a test.
 **After a change.** Every setup mutation calls `invalidateAfterSetupChange`, which refetches
 that resource and marks every `['planning', ...]` query stale. Plan and paycheck queries
 (3D) must start with `['planning']`.
+
+**Money actions are safe to repeat** (ADR 0015). A payment carries an id made once per "Mark
+paid" and reused on retry; commit, plan and record are idempotent on the server. Tests use
+`backend.loseResponseNext(call)`, which applies a request and then loses its reply, to prove
+a retry after a timeout changes nothing.
 
 A feature's hook looks like `useQuery({ queryKey, queryFn: () => unwrap(api.GET('/path')) })`.
 `unwrap` returns the typed data or throws an `ApiError` with the backend's `code` and `message`.

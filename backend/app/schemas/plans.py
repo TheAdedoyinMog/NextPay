@@ -72,6 +72,13 @@ class PlanResponse(BaseModel):
     id: uuid.UUID
     version: int = Field(description="1, 2, 3... for this paycheck.")
     status: PlanStatus
+    is_out_of_date: bool = Field(
+        description=(
+            "A draft whose details have changed since it was made: committing it would be "
+            "refused with 409 `plan_out_of_date`, so generate it again. Always false for a "
+            "committed or superseded plan."
+        )
+    )
     committed_at: datetime | None
     engine_version: str
     as_of: date = Field(description="The day the plan was made for, in your time zone.")

@@ -75,7 +75,7 @@ it('lets the balance and the goal be skipped, and Home asks for a balance', asyn
   await press('Skip');
 
   expect(
-    await screen.findByText('No balance yet. Your plan starts from $0 until you add one.'),
+    await screen.findByText('No balance yet. Plans start from $0 until you add one.'),
   ).toBeTruthy();
   expect(screen.getByText('No goals yet.')).toBeTruthy();
   expect(backend.count('POST /balance-snapshots')).toBe(0);

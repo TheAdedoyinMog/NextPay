@@ -36,6 +36,7 @@ from app.repositories import (
 from app.services.auth import AuthService
 from app.services.balances import BalanceSnapshotService
 from app.services.bills import BillService
+from app.services.dashboard import DashboardService
 from app.services.debts import DebtService
 from app.services.essential_expenses import EssentialExpenseService
 from app.services.goals import GoalService
@@ -205,7 +206,23 @@ def get_payment_service(session: SessionDep, clock: ClockDep) -> PaymentService:
     )
 
 
+def get_dashboard_service(
+    session: SessionDep,
+    clock: ClockDep,
+    paychecks: Annotated[PaycheckService, Depends(get_paycheck_service)],
+    plans: Annotated[PlanService, Depends(get_plan_service)],
+) -> DashboardService:
+    return DashboardService(
+        paychecks=paychecks,
+        plans=plans,
+        balances=BalanceSnapshotRepository(session),
+        payments=(BillPaymentRepository(session), DebtPaymentRepository(session)),
+        clock=clock,
+    )
+
+
 PaymentServiceDep = Annotated[PaymentService, Depends(get_payment_service)]
+DashboardServiceDep = Annotated[DashboardService, Depends(get_dashboard_service)]
 PaycheckServiceDep = Annotated[PaycheckService, Depends(get_paycheck_service)]
 PlanServiceDep = Annotated[PlanService, Depends(get_plan_service)]
 IncomeSourceServiceDep = Annotated[IncomeSourceService, Depends(get_income_source_service)]

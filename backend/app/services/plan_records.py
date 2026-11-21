@@ -58,6 +58,8 @@ class PlanDetails:
     summary: str
     allocations: tuple[ExplainedAllocation, ...]
     projections: tuple[ExplainedProjection, ...]
+    # A draft that commit would refuse with plan_out_of_date; always False otherwise.
+    is_out_of_date: bool = False
 
 
 def allocation_target(row: Allocation) -> uuid.UUID | None:
@@ -205,6 +207,8 @@ def describe(
     source: IncomeSource,
     allocations: Sequence[Allocation],
     projections: Sequence[GoalProjection],
+    *,
+    is_out_of_date: bool = False,
 ) -> PlanDetails:
     """A stored plan with the engine's explanation of every line."""
     result = to_engine_plan(plan, paycheck, allocations, projections)
@@ -225,4 +229,5 @@ def describe(
             )
             for row, projection in zip(projections, result.goal_projections, strict=True)
         ),
+        is_out_of_date=is_out_of_date,
     )

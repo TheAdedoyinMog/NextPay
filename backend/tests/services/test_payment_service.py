@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from app.core.errors import InvalidInputError, NotFoundError
+from app.core.errors import InvalidInputError, NotFoundError, PaymentIdConflictError
 from app.models import Bill, Debt, Reserve, User
 from app.services.payments import (
     BillPaymentInput,
@@ -66,7 +66,7 @@ def test_marking_a_bill_paid_needs_no_details(
     rent = add_bill(bills)
     reserve = set_aside(reserves, rent, 80_000)
 
-    payment = payment_service.pay_bill(ADA, rent.id, BillPaymentInput())
+    payment = payment_service.pay_bill(ADA, rent.id, BillPaymentInput())[0]
 
     assert bill_payments.rows == {payment.id: payment}
     assert (payment.user_id, payment.bill_id) == (ADA.id, rent.id)
@@ -99,19 +99,35 @@ def test_the_reserve_goes_down_by_what_was_paid_but_not_below_zero(
     rent = add_bill(bills)
     reserve = set_aside(reserves, rent, reserved)
 
-    payment = payment_service.pay_bill(ADA, rent.id, BillPaymentInput(amount_cents=paid))
+    payment = payment_service.pay_bill(ADA, rent.id, BillPaymentInput(amount_cents=paid))[0]
 
     assert payment.amount_cents == paid
     assert reserve.amount_cents == left
+    # What came out of the reserve; the rest came out of Safe to Spend (ADR 0016).
+    assert payment.reserve_drawn_cents == reserved - left
 
 
 def test_paying_a_bill_with_nothing_set_aside_just_records_the_payment(
     payment_service: PaymentService, bills: Fake, bill_payments: Fake, reserves: Fake
 ) -> None:
     rent = add_bill(bills)
-    payment_service.pay_bill(ADA, rent.id, BillPaymentInput())
+    payment = payment_service.pay_bill(ADA, rent.id, BillPaymentInput())[0]
     assert len(bill_payments.rows) == 1
     assert reserves.rows == {}
+    assert payment.reserve_drawn_cents == 0
+
+
+def test_a_payment_is_stamped_with_the_apps_clock(
+    payment_service: PaymentService, bills: Fake, debts: Fake
+) -> None:
+    """Compared with a plan's committed_at, which the same clock sets."""
+    rent, loan = add_bill(bills), add_debt(debts)
+    noon = datetime(2026, 10, 7, 12, tzinfo=UTC)
+
+    bill_payment = payment_service.pay_bill(ADA, rent.id, BillPaymentInput())[0]
+    debt_payment = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput())[0]
+
+    assert (bill_payment.created_at, debt_payment.created_at) == (noon, noon)
 
 
 def test_only_the_paid_bills_reserve_is_drawn_down(
@@ -122,7 +138,7 @@ def test_only_the_paid_bills_reserve_is_drawn_down(
     untouched = [set_aside(reserves, phone, 6_000), set_aside(reserves, bobs, 80_000)]
     paid = set_aside(reserves, rent, 80_000)
 
-    payment_service.pay_bill(ADA, rent.id, BillPaymentInput())
+    payment_service.pay_bill(ADA, rent.id, BillPaymentInput())[0]
 
     assert paid.amount_cents == 0
     assert [reserve.amount_cents for reserve in untouched] == [6_000, 80_000]
@@ -135,8 +151,10 @@ def test_today_is_the_users_own_date(
     clock.now = datetime(2026, 10, 21, 2, 0, tzinfo=UTC)  # still Oct 20 in Los Angeles
     westerner = User(id=ADA.id, email=ADA.email, timezone="America/Los_Angeles")
 
-    assert payment_service.pay_bill(ADA, rent.id, BillPaymentInput()).paid_on == date(2026, 10, 21)
-    assert payment_service.pay_bill(westerner, rent.id, BillPaymentInput()).paid_on == date(
+    assert payment_service.pay_bill(ADA, rent.id, BillPaymentInput())[0].paid_on == date(
+        2026, 10, 21
+    )
+    assert payment_service.pay_bill(westerner, rent.id, BillPaymentInput())[0].paid_on == date(
         2026, 10, 20
     )
 
@@ -161,7 +179,7 @@ def test_a_payment_is_for_the_due_date_closest_to_the_day_it_was_paid(
     payment_service: PaymentService, bills: Fake, paid_on: date, due: date
 ) -> None:
     rent = add_bill(bills)
-    payment = payment_service.pay_bill(ADA, rent.id, BillPaymentInput(paid_on=paid_on))
+    payment = payment_service.pay_bill(ADA, rent.id, BillPaymentInput(paid_on=paid_on))[0]
     assert (payment.paid_on, payment.due_date) == (paid_on, due)
 
 
@@ -181,7 +199,7 @@ def test_a_one_time_bill_has_only_one_due_date(
     registration = add_bill(
         bills, name="Car registration", first_due_date=date(2026, 12, 1), repeat_every_months=None
     )
-    payment = payment_service.pay_bill(ADA, registration.id, BillPaymentInput(paid_on=paid_on))
+    payment = payment_service.pay_bill(ADA, registration.id, BillPaymentInput(paid_on=paid_on))[0]
     assert payment.due_date == date(2026, 12, 1)
 
 
@@ -189,7 +207,7 @@ def test_a_bill_due_on_the_31st_is_matched_to_the_months_last_day(
     payment_service: PaymentService, bills: Fake
 ) -> None:
     bill = add_bill(bills, first_due_date=date(2027, 1, 31))
-    payment = payment_service.pay_bill(ADA, bill.id, BillPaymentInput(paid_on=date(2027, 2, 26)))
+    payment = payment_service.pay_bill(ADA, bill.id, BillPaymentInput(paid_on=date(2027, 2, 26)))[0]
     assert payment.due_date == date(2027, 2, 28)
 
 
@@ -197,7 +215,7 @@ def test_the_occurrence_can_be_named(payment_service: PaymentService, bills: Fak
     rent = add_bill(bills)
     # Catching up in December on the rent that was due in October.
     late = BillPaymentInput(paid_on=date(2026, 12, 2), due_date=date(2026, 10, 20))
-    assert payment_service.pay_bill(ADA, rent.id, late).due_date == date(2026, 10, 20)
+    assert payment_service.pay_bill(ADA, rent.id, late)[0].due_date == date(2026, 10, 20)
 
 
 @pytest.mark.parametrize("due_date", [date(2026, 10, 21), date(2026, 9, 20), date(2026, 11, 1)])
@@ -213,7 +231,7 @@ def test_a_named_occurrence_must_be_one_of_the_bills_due_dates(
     reserve = set_aside(reserves, rent, 80_000)
 
     with pytest.raises(InvalidInputError, match="is not a due date of Rent"):
-        payment_service.pay_bill(ADA, rent.id, BillPaymentInput(due_date=due_date))
+        payment_service.pay_bill(ADA, rent.id, BillPaymentInput(due_date=due_date))[0]
 
     assert bill_payments.rows == {}
     assert reserve.amount_cents == 80_000
@@ -228,7 +246,7 @@ def test_a_payment_must_be_a_positive_whole_number_of_cents(
     reserve = set_aside(reserves, rent, 80_000)
 
     with pytest.raises(InvalidInputError, match="more than"):
-        payment_service.pay_bill(ADA, rent.id, BillPaymentInput(amount_cents=amount))
+        payment_service.pay_bill(ADA, rent.id, BillPaymentInput(amount_cents=amount))[0]
 
     assert bill_payments.rows == {}
     assert reserve.amount_cents == 80_000
@@ -274,7 +292,7 @@ def test_recording_the_minimum_needs_no_details(
     loan = add_debt(debts)
     reserve = set_aside_for_debt(reserves, loan, 15_000)
 
-    payment = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput())
+    payment = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput())[0]
 
     assert debt_payments.rows == {payment.id: payment}
     assert (payment.user_id, payment.debt_id) == (ADA.id, loan.id)
@@ -308,16 +326,17 @@ def test_the_balance_and_the_reserve_both_go_down_but_not_below_zero(
     loan = add_debt(debts)
     reserve = set_aside_for_debt(reserves, loan, reserved)
 
-    payment_service.pay_debt(ADA, loan.id, DebtPaymentInput(amount_cents=paid))
+    payment = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput(amount_cents=paid))[0]
 
     assert (loan.balance_cents, reserve.amount_cents) == (balance_left, reserve_left)
+    assert payment.reserve_drawn_cents == reserved - reserve_left
 
 
 def test_the_last_payment_defaults_to_what_is_left(
     payment_service: PaymentService, debts: Fake
 ) -> None:
     loan = add_debt(debts, balance_cents=4_000)
-    payment = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput())
+    payment = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput())[0]
     assert (payment.amount_cents, loan.balance_cents) == (4_000, 0)
 
 
@@ -327,10 +346,10 @@ def test_with_nothing_owed_or_no_minimum_the_amount_must_be_given(
 ) -> None:
     loan = add_debt(debts, **fields)
     with pytest.raises(InvalidInputError, match="more than"):
-        payment_service.pay_debt(ADA, loan.id, DebtPaymentInput())
+        payment_service.pay_debt(ADA, loan.id, DebtPaymentInput())[0]
     assert debt_payments.rows == {}
 
-    payment_service.pay_debt(ADA, loan.id, DebtPaymentInput(amount_cents=2_500))
+    payment_service.pay_debt(ADA, loan.id, DebtPaymentInput(amount_cents=2_500))[0]
     assert len(debt_payments.rows) == 1
 
 
@@ -347,7 +366,7 @@ def test_a_debt_payment_must_be_positive(
     reserve = set_aside_for_debt(reserves, loan, 15_000)
 
     with pytest.raises(InvalidInputError):
-        payment_service.pay_debt(ADA, loan.id, DebtPaymentInput(amount_cents=amount))
+        payment_service.pay_debt(ADA, loan.id, DebtPaymentInput(amount_cents=amount))[0]
 
     assert debt_payments.rows == {}
     assert (loan.balance_cents, reserve.amount_cents) == (900_000, 15_000)
@@ -360,7 +379,7 @@ def test_a_debt_payment_can_be_dated_and_only_touches_its_own_debt(
     loan, card = add_debt(debts), add_debt(debts, name="Visa", balance_cents=120_000)
     card_reserve = set_aside_for_debt(reserves, card, 3_500)
 
-    payment = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput(paid_on=date(2026, 9, 19)))
+    payment = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput(paid_on=date(2026, 9, 19)))[0]
 
     assert payment.paid_on == date(2026, 9, 19)
     assert (card.balance_cents, card_reserve.amount_cents) == (120_000, 3_500)
@@ -370,9 +389,13 @@ def test_debt_payments_are_listed_newest_first_for_one_debt(
     payment_service: PaymentService, debts: Fake
 ) -> None:
     loan, card = add_debt(debts), add_debt(debts, name="Visa")
-    september = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput(paid_on=date(2026, 9, 20)))
-    payment_service.pay_debt(ADA, card.id, DebtPaymentInput(paid_on=date(2026, 10, 1)))
-    october = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput(paid_on=date(2026, 10, 20)))
+    september = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput(paid_on=date(2026, 9, 20)))[
+        0
+    ]
+    payment_service.pay_debt(ADA, card.id, DebtPaymentInput(paid_on=date(2026, 10, 1)))[0]
+    october = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput(paid_on=date(2026, 10, 20)))[
+        0
+    ]
 
     assert list(payment_service.list_debt_payments(ADA.id, loan.id)) == [october, september]
 
@@ -389,7 +412,7 @@ def test_another_users_debt_is_missing_for_paying_and_listing(
 
     for debt_id in (loan.id, uuid.uuid4()):
         with pytest.raises(NotFoundError):
-            payment_service.pay_debt(BOB, debt_id, DebtPaymentInput())
+            payment_service.pay_debt(BOB, debt_id, DebtPaymentInput())[0]
         with pytest.raises(NotFoundError):
             payment_service.list_debt_payments(BOB.id, debt_id)
 
@@ -405,9 +428,13 @@ def test_payments_are_listed_newest_first_for_one_bill(
     payment_service: PaymentService, bills: Fake
 ) -> None:
     rent, phone = add_bill(bills), add_bill(bills, name="Phone", amount_cents=6_000)
-    october = payment_service.pay_bill(ADA, rent.id, BillPaymentInput(paid_on=date(2026, 10, 19)))
-    payment_service.pay_bill(ADA, phone.id, BillPaymentInput(paid_on=date(2026, 10, 25)))
-    november = payment_service.pay_bill(ADA, rent.id, BillPaymentInput(paid_on=date(2026, 11, 20)))
+    october = payment_service.pay_bill(ADA, rent.id, BillPaymentInput(paid_on=date(2026, 10, 19)))[
+        0
+    ]
+    payment_service.pay_bill(ADA, phone.id, BillPaymentInput(paid_on=date(2026, 10, 25)))[0]
+    november = payment_service.pay_bill(ADA, rent.id, BillPaymentInput(paid_on=date(2026, 11, 20)))[
+        0
+    ]
 
     assert list(payment_service.list_bill_payments(ADA.id, rent.id)) == [november, october]
 
@@ -424,10 +451,35 @@ def test_another_users_bill_is_missing_for_paying_and_listing(
 
     for bill_id in (rent.id, uuid.uuid4()):
         with pytest.raises(NotFoundError):
-            payment_service.pay_bill(BOB, bill_id, BillPaymentInput())
+            payment_service.pay_bill(BOB, bill_id, BillPaymentInput())[0]
         with pytest.raises(NotFoundError):
             payment_service.list_bill_payments(BOB.id, bill_id)
 
     assert bill_payments.rows == {}
     assert reserve.amount_cents == 80_000
     assert transaction.commits == 0
+
+
+def test_a_payment_with_a_known_id_is_returned_and_changes_nothing(
+    payment_service: PaymentService, bills: Any, reserves: Any
+) -> None:
+    rent = add_bill(bills)
+    payment_id = uuid.uuid4()
+
+    first, created = payment_service.pay_bill(ADA, rent.id, BillPaymentInput(id=payment_id))
+    again, created_again = payment_service.pay_bill(ADA, rent.id, BillPaymentInput(id=payment_id))
+
+    assert (created, created_again) == (True, False)
+    assert again is first
+    assert first.id == payment_id
+
+
+def test_a_known_id_on_another_debt_is_a_conflict(
+    payment_service: PaymentService, debts: Any
+) -> None:
+    loan, card = add_debt(debts), add_debt(debts)
+    payment_id = uuid.uuid4()
+    payment_service.pay_debt(ADA, loan.id, DebtPaymentInput(id=payment_id))
+
+    with pytest.raises(PaymentIdConflictError):
+        payment_service.pay_debt(ADA, card.id, DebtPaymentInput(id=payment_id))

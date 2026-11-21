@@ -23,6 +23,8 @@ type ButtonProps = {
   isPending?: boolean;
   pendingTitle?: string;
   variant?: 'primary' | 'secondary' | 'danger';
+  /** For VoiceOver when several buttons share a title, such as "Mark Rent paid". */
+  accessibilityLabel?: string;
 };
 
 /** The main action on a screen. While pending it can't be pressed again, so no double submit. */
@@ -33,12 +35,13 @@ export function ActionButton({
   isPending = false,
   pendingTitle = 'Saving…',
   variant = 'primary',
+  accessibilityLabel,
 }: ButtonProps) {
   const inactive = disabled || isPending;
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={isPending ? pendingTitle : title}
+      accessibilityLabel={isPending ? pendingTitle : (accessibilityLabel ?? title)}
       accessibilityState={{ disabled: inactive, busy: isPending }}
       disabled={inactive}
       onPress={onPress}

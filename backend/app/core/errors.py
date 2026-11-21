@@ -67,6 +67,13 @@ class PlanSupersededError(ConflictError):
     message = "A newer plan replaced this one. Commit the newer plan."
 
 
+class PaymentIdConflictError(ConflictError):
+    """A client-made payment id that is already used by a different payment."""
+
+    code = "payment_id_conflict"
+    message = "This payment id is already used by another payment. Make a new one."
+
+
 class EmergencyGoalExistsError(ConflictError):
     """The planner funds one emergency fund; a second would be ambiguous."""
 

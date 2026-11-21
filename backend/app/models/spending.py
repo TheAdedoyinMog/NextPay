@@ -54,8 +54,15 @@ class DebtPayment(UserOwnedMixin, TimestampsMixin, Base):
         tenant_fk("debt_id", "debts", ondelete="CASCADE"),
         Index("ix_debt_payments_debt_id_paid_on", "debt_id", "paid_on"),
         CheckConstraint("amount_cents > 0", name="amount_positive"),
+        CheckConstraint(
+            "reserve_drawn_cents >= 0 AND reserve_drawn_cents <= amount_cents",
+            name="reserve_drawn_range",
+        ),
     )
 
     debt_id: Mapped[uuid.UUID]
     paid_on: Mapped[date]
     amount_cents: Mapped[Cents]
+    # How much of the payment came out of its reserve; the rest came out of Safe to Spend.
+    # Sorted after the timestamps because a migration added it to the table's end.
+    reserve_drawn_cents: Mapped[Cents] = mapped_column(sort_order=3)

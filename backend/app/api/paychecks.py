@@ -6,15 +6,18 @@ is what the app knows from the timeline.
 """
 
 import uuid
+from collections.abc import Iterable
 from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Query
 
-from app.api.deps import CurrentUser, PaycheckServiceDep
+from app.api.deps import CurrentUser, PaycheckServiceDep, PlanServiceDep
 from app.api.errors import error_responses
 from app.api.mappers import to_paycheck_list_response, to_paycheck_response
+from app.models import Paycheck, PaycheckPlan
 from app.schemas.paychecks import ActualAmountRequest, PaycheckListResponse, PaycheckResponse
+from app.services.paychecks import PaycheckEntry
 
 router = APIRouter(tags=["paychecks"])
 
@@ -31,10 +34,12 @@ router = APIRouter(tags=["paychecks"])
 def list_paychecks(
     user: CurrentUser,
     paychecks: PaycheckServiceDep,
+    plans: PlanServiceDep,
     start: Annotated[date | None, Query()] = None,
     end: Annotated[date | None, Query()] = None,
 ) -> PaycheckListResponse:
-    return to_paycheck_list_response(paychecks.timeline(user, start, end))
+    entries = paychecks.timeline(user, start, end)
+    return to_paycheck_list_response(entries, plans.out_of_date(user, _planned(entries)))
 
 
 @router.put(
@@ -52,7 +57,15 @@ def record_actual_amount(
     body: ActualAmountRequest,
     user: CurrentUser,
     paychecks: PaycheckServiceDep,
+    plans: PlanServiceDep,
 ) -> PaycheckResponse:
-    return to_paycheck_response(
-        paychecks.record_actual(user, income_source_id, pay_date, body.actual_amount_cents)
-    )
+    entry = paychecks.record_actual(user, income_source_id, pay_date, body.actual_amount_cents)
+    return to_paycheck_response(entry, plans.out_of_date(user, _planned([entry])))
+
+
+def _planned(entries: Iterable[PaycheckEntry]) -> list[tuple[PaycheckPlan, Paycheck]]:
+    return [
+        (entry.plan, entry.paycheck)
+        for entry in entries
+        if entry.plan is not None and entry.paycheck is not None
+    ]

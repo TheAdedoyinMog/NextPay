@@ -77,6 +77,7 @@ def test_a_plan_has_exactly_these_fields(
         "id",
         "version",
         "status",
+        "is_out_of_date",
         "committed_at",
         "engine_version",
         "as_of",
@@ -106,6 +107,7 @@ def test_a_plan_has_exactly_these_fields(
             "version": 1,
             "status": "draft",
             "safe_to_spend_cents": 75_833,
+            "is_out_of_date": False,
         },
     }
     assert body["allocations"][0] == {
@@ -331,7 +333,14 @@ def test_an_archived_sources_plan_can_still_be_read(
     read = client.get(f"/plans/{body['id']}", headers=ada).json()
 
     assert read["paycheck"]["income_source_archived"] is True
-    assert read == {**body, "paycheck": {**body["paycheck"], "income_source_archived": True}}
+    # An archived source's draft can't be committed any more, so it is out of date.
+    assert read["is_out_of_date"] is True
+    paycheck = {
+        **body["paycheck"],
+        "income_source_archived": True,
+        "plan": {**body["paycheck"]["plan"], "is_out_of_date": True},
+    }
+    assert read == {**body, "is_out_of_date": True, "paycheck": paycheck}
 
 
 def test_a_plan_outlives_the_bill_and_goal_it_mentions(

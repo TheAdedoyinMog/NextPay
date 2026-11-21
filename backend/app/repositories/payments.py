@@ -2,7 +2,9 @@
 
 import uuid
 from collections.abc import Sequence
+from datetime import datetime
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import BillPayment, DebtPayment
@@ -23,6 +25,22 @@ class BillPaymentRepository(UserOwnedRepository[BillPayment]):
             )
         ).all()
 
+    def find_any_owner(self, payment_id: uuid.UUID) -> BillPayment | None:
+        """The payment with this id, whoever owns it. Only for spotting a reused id:
+        the caller must check the owner before returning it (ADR 0015)."""
+        return self._session.get(BillPayment, payment_id)
+
+    def unreserved_since(self, user_id: uuid.UUID, since: datetime) -> int:
+        """Cents that payments recorded at or after ``since`` paid beyond their reserves."""
+        total = self._session.scalar(
+            select(
+                func.coalesce(
+                    func.sum(BillPayment.amount_cents - BillPayment.reserve_drawn_cents), 0
+                )
+            ).where(BillPayment.user_id == user_id, BillPayment.created_at >= since)
+        )
+        return int(total or 0)
+
 
 class DebtPaymentRepository(UserOwnedRepository[DebtPayment]):
     def __init__(self, session: Session) -> None:
@@ -37,3 +55,19 @@ class DebtPaymentRepository(UserOwnedRepository[DebtPayment]):
                 DebtPayment.paid_on.desc(), DebtPayment.created_at.desc(), DebtPayment.id.desc()
             )
         ).all()
+
+    def find_any_owner(self, payment_id: uuid.UUID) -> DebtPayment | None:
+        """The payment with this id, whoever owns it. Only for spotting a reused id:
+        the caller must check the owner before returning it (ADR 0015)."""
+        return self._session.get(DebtPayment, payment_id)
+
+    def unreserved_since(self, user_id: uuid.UUID, since: datetime) -> int:
+        """Cents that payments recorded at or after ``since`` paid beyond their reserves."""
+        total = self._session.scalar(
+            select(
+                func.coalesce(
+                    func.sum(DebtPayment.amount_cents - DebtPayment.reserve_drawn_cents), 0
+                )
+            ).where(DebtPayment.user_id == user_id, DebtPayment.created_at >= since)
+        )
+        return int(total or 0)

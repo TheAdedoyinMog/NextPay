@@ -463,7 +463,7 @@ export interface paths {
         put?: never;
         /**
          * Record a bill payment
-         * @description Send `{}` to mark the bill paid in full today. The money set aside for the bill goes down by the amount paid, never below $0. Your balance is not changed: enter a new one when you next plan.
+         * @description Send `{}` to mark the bill paid in full today. The money set aside for the bill goes down by the amount paid, never below $0. Your balance is not changed: enter a new one when you next plan. Send an `id` you made so a retry can't pay twice.
          */
         post: operations["pay_bill_bills__bill_id__payments_post"];
         delete?: never;
@@ -484,9 +484,29 @@ export interface paths {
         put?: never;
         /**
          * Record a debt payment
-         * @description Send `{}` to record this month's minimum, paid today. The debt's balance and the money set aside for it both go down by the amount paid, never below $0.
+         * @description Send `{}` to record this month's minimum, paid today. The debt's balance and the money set aside for it both go down by the amount paid, never below $0. Send an `id` you made so a retry can't pay twice.
          */
         post: operations["pay_debt_debts__debt_id__payments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dashboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the home screen shows
+         * @description Today in your time zone, the current and next paydays with their plans, Safe to Spend from the newest committed plan, and your latest balance.
+         */
+        get: operations["dashboard_dashboard_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -625,6 +645,11 @@ export interface components {
         /** BillPaymentRequest */
         BillPaymentRequest: {
             /**
+             * Id
+             * @description A new id the client makes for this payment, so a retry can't record it twice: a payment with this id for the same bill is returned as it is (200) and nothing changes. Used for anything else: 409 `payment_id_conflict`. Left out: the server makes one, and a retry records a second payment.
+             */
+            id?: string | null;
+            /**
              * Amount Cents
              * @description Left out: the bill's full amount.
              */
@@ -742,6 +767,23 @@ export interface components {
              */
             anchor_date: string;
         };
+        /** DashboardResponse */
+        DashboardResponse: {
+            /**
+             * Today
+             * Format: date
+             * @description Today in your time zone.
+             */
+            today: string;
+            /** @description The newest payday on or before today; null before your first. */
+            current_paycheck: components["schemas"]["PaycheckResponse"] | null;
+            /** @description The first payday after today. */
+            next_paycheck: components["schemas"]["PaycheckResponse"] | null;
+            /** @description null until a plan for a payday on or before today is committed. */
+            safe_to_spend: components["schemas"]["SafeToSpendResponse"] | null;
+            /** @description Your latest balance; null if you have entered none. */
+            balance: components["schemas"]["BalanceSnapshotResponse"] | null;
+        };
         /** DebtListResponse */
         DebtListResponse: {
             /** Items */
@@ -757,6 +799,11 @@ export interface components {
         };
         /** DebtPaymentRequest */
         DebtPaymentRequest: {
+            /**
+             * Id
+             * @description A new id the client makes for this payment, so a retry can't record it twice: a payment with this id for the same debt is returned as it is (200) and nothing changes. Used for anything else: 409 `payment_id_conflict`. Left out: the server makes one, and a retry records a second payment.
+             */
+            id?: string | null;
             /**
              * Amount Cents
              * @description Left out: the minimum payment, or the whole balance if that is less.
@@ -1161,6 +1208,11 @@ export interface components {
              */
             version: number;
             status: components["schemas"]["PlanStatus"];
+            /**
+             * Is Out Of Date
+             * @description A draft whose details have changed since it was made: committing it would be refused with 409 `plan_out_of_date`, so generate it again. Always false for a committed or superseded plan.
+             */
+            is_out_of_date: boolean;
             /** Committed At */
             committed_at: string | null;
             /** Engine Version */
@@ -1231,6 +1283,11 @@ export interface components {
             status: components["schemas"]["PlanStatus"];
             /** Safe To Spend Cents */
             safe_to_spend_cents: number;
+            /**
+             * Is Out Of Date
+             * @description A draft whose details have changed since it was made: committing it would be refused with 409 `plan_out_of_date`, so generate it again. Always false for a committed or superseded plan.
+             */
+            is_out_of_date: boolean;
         };
         /**
          * Reason
@@ -1258,6 +1315,40 @@ export interface components {
              * Format: password
              */
             password: string;
+        };
+        /**
+         * SafeToSpendResponse
+         * @description From the newest committed plan for a payday on or before today, kept current
+         *     as payments are recorded (ADR 0003, ADR 0016).
+         */
+        SafeToSpendResponse: {
+            /**
+             * Plan Id
+             * Format: uuid
+             */
+            plan_id: string;
+            /**
+             * Pay Date
+             * Format: date
+             */
+            pay_date: string;
+            /** Income Source Name */
+            income_source_name: string;
+            /**
+             * Safe To Spend Cents
+             * @description The plan's Safe to Spend, less what payments since its commit paid beyond what was set aside for them. Never below 0.
+             */
+            safe_to_spend_cents: number;
+            /**
+             * Reserve Deficit Cents
+             * @description How far what is set aside exceeds the money on hand, including payments beyond their reserves that Safe to Spend could not cover; normally 0.
+             */
+            reserve_deficit_cents: number;
+            /**
+             * Paid Beyond Reserves Cents
+             * @description What payments since the plan's commit paid beyond what was set aside.
+             */
+            paid_beyond_reserves_cents: number;
         };
         /**
          * SemiMonthlySchedule
@@ -3137,6 +3228,15 @@ export interface operations {
             };
         };
         responses: {
+            /** @description A retry: the payment with this id. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillPaymentResponse"];
+                };
+            };
             /** @description Successful Response */
             201: {
                 headers: {
@@ -3157,6 +3257,15 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3239,6 +3348,15 @@ export interface operations {
             };
         };
         responses: {
+            /** @description A retry: the payment with this id. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DebtPaymentResponse"];
+                };
+            };
             /** @description Successful Response */
             201: {
                 headers: {
@@ -3266,8 +3384,46 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    dashboard_dashboard_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DashboardResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -208,12 +208,32 @@ class FakeReserves(FakeOwnedStore):
 
 
 class FakeBillPayments(FakeOwnedStore):
+    def unreserved_since(self, user_id: uuid.UUID, since: Any) -> int:
+        return sum(
+            row.amount_cents - row.reserve_drawn_cents
+            for row in self.list_for(user_id)
+            if row.created_at >= since
+        )
+
+    def find_any_owner(self, payment_id: uuid.UUID) -> Any:
+        return self.rows.get(payment_id)
+
     def list_for_bill(self, user_id: uuid.UUID, bill_id: uuid.UUID) -> list[Any]:
         own = [row for row in self.list_for(user_id) if row.bill_id == bill_id]
         return sorted(own, key=lambda row: row.paid_on, reverse=True)
 
 
 class FakeDebtPayments(FakeOwnedStore):
+    def unreserved_since(self, user_id: uuid.UUID, since: Any) -> int:
+        return sum(
+            row.amount_cents - row.reserve_drawn_cents
+            for row in self.list_for(user_id)
+            if row.created_at >= since
+        )
+
+    def find_any_owner(self, payment_id: uuid.UUID) -> Any:
+        return self.rows.get(payment_id)
+
     def list_for_debt(self, user_id: uuid.UUID, debt_id: uuid.UUID) -> list[Any]:
         own = [row for row in self.list_for(user_id) if row.debt_id == debt_id]
         return sorted(own, key=lambda row: row.paid_on, reverse=True)

@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Response, status
 
 from app.api.deps import CurrentUser, PaymentServiceDep
 from app.api.errors import error_responses
@@ -29,18 +29,28 @@ router = APIRouter(tags=["payments"])
 @router.post(
     "/bills/{bill_id}/payments",
     status_code=status.HTTP_201_CREATED,
-    responses=error_responses(401, 404, 422),
+    responses={
+        200: {"model": BillPaymentResponse, "description": "A retry: the payment with this id."},
+        **error_responses(401, 404, 409, 422),
+    },
     summary="Record a bill payment",
     description=(
         "Send `{}` to mark the bill paid in full today. The money set aside for the bill "
         "goes down by the amount paid, never below $0. Your balance is not changed: enter "
-        "a new one when you next plan."
+        "a new one when you next plan. Send an `id` you made so a retry can't pay twice."
     ),
 )
 def pay_bill(
-    bill_id: uuid.UUID, body: BillPaymentRequest, user: CurrentUser, payments: PaymentServiceDep
+    bill_id: uuid.UUID,
+    body: BillPaymentRequest,
+    user: CurrentUser,
+    payments: PaymentServiceDep,
+    response: Response,
 ) -> BillPaymentResponse:
-    return to_bill_payment_response(payments.pay_bill(user, bill_id, to_bill_payment_input(body)))
+    payment, created = payments.pay_bill(user, bill_id, to_bill_payment_input(body))
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return to_bill_payment_response(payment)
 
 
 @router.get(
@@ -57,17 +67,28 @@ def list_bill_payments(
 @router.post(
     "/debts/{debt_id}/payments",
     status_code=status.HTTP_201_CREATED,
-    responses=error_responses(401, 404, 422),
+    responses={
+        200: {"model": DebtPaymentResponse, "description": "A retry: the payment with this id."},
+        **error_responses(401, 404, 409, 422),
+    },
     summary="Record a debt payment",
     description=(
         "Send `{}` to record this month's minimum, paid today. The debt's balance and the "
-        "money set aside for it both go down by the amount paid, never below $0."
+        "money set aside for it both go down by the amount paid, never below $0. Send an "
+        "`id` you made so a retry can't pay twice."
     ),
 )
 def pay_debt(
-    debt_id: uuid.UUID, body: DebtPaymentRequest, user: CurrentUser, payments: PaymentServiceDep
+    debt_id: uuid.UUID,
+    body: DebtPaymentRequest,
+    user: CurrentUser,
+    payments: PaymentServiceDep,
+    response: Response,
 ) -> DebtPaymentResponse:
-    return to_debt_payment_response(payments.pay_debt(user, debt_id, to_debt_payment_input(body)))
+    payment, created = payments.pay_debt(user, debt_id, to_debt_payment_input(body))
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return to_debt_payment_response(payment)
 
 
 @router.get(

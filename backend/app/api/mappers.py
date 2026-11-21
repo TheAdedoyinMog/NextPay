@@ -6,7 +6,7 @@ a response if someone adds it here.
 """
 
 import uuid
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 
 from app.models import (
     BalanceSnapshot,
@@ -23,6 +23,7 @@ from app.models import (
 from app.schemas.auth import TokenResponse
 from app.schemas.balances import BalanceSnapshotListResponse, BalanceSnapshotResponse
 from app.schemas.bills import BillListResponse, BillRequest, BillResponse
+from app.schemas.dashboard import DashboardResponse, SafeToSpendResponse
 from app.schemas.debts import DebtListResponse, DebtRequest, DebtResponse
 from app.schemas.essential_expenses import (
     EssentialExpenseListResponse,
@@ -52,6 +53,7 @@ from app.schemas.plans import AllocationResponse, GoalProjectionResponse, PlanRe
 from app.schemas.user import SettingsRequest, UserResponse
 from app.services.auth import TokenPair
 from app.services.bills import BillInput
+from app.services.dashboard import Dashboard
 from app.services.debts import DebtInput
 from app.services.essential_expenses import EssentialExpenseInput
 from app.services.goals import GoalInput
@@ -124,7 +126,7 @@ def to_bill_list_response(bills: Iterable[Bill], reserved: Reserved) -> BillList
 
 def to_bill_payment_input(body: BillPaymentRequest) -> BillPaymentInput:
     return BillPaymentInput(
-        amount_cents=body.amount_cents, paid_on=body.paid_on, due_date=body.due_date
+        id=body.id, amount_cents=body.amount_cents, paid_on=body.paid_on, due_date=body.due_date
     )
 
 
@@ -204,7 +206,7 @@ def to_debt_list_response(debts: Iterable[Debt], reserved: Reserved) -> DebtList
 
 
 def to_debt_payment_input(body: DebtPaymentRequest) -> DebtPaymentInput:
-    return DebtPaymentInput(amount_cents=body.amount_cents, paid_on=body.paid_on)
+    return DebtPaymentInput(id=body.id, amount_cents=body.amount_cents, paid_on=body.paid_on)
 
 
 def to_debt_payment_response(payment: DebtPayment) -> DebtPaymentResponse:
@@ -288,7 +290,10 @@ def to_income_source_list_response(sources: Iterable[IncomeSource]) -> IncomeSou
 # --- paychecks -----------------------------------------------------------------
 
 
-def to_paycheck_response(entry: PaycheckEntry) -> PaycheckResponse:
+def to_paycheck_response(
+    entry: PaycheckEntry, out_of_date: Collection[uuid.UUID] = ()
+) -> PaycheckResponse:
+    """``out_of_date``: ids of out-of-date drafts, from ``PlanService.out_of_date``."""
     paycheck, plan = entry.paycheck, entry.plan
     actual = None if paycheck is None else paycheck.actual_amount_cents
     summary = (
@@ -299,6 +304,7 @@ def to_paycheck_response(entry: PaycheckEntry) -> PaycheckResponse:
             version=plan.version,
             status=plan.status,
             safe_to_spend_cents=plan.safe_to_spend_cents,
+            is_out_of_date=plan.id in out_of_date,
         )
     )
     return PaycheckResponse(
@@ -314,8 +320,12 @@ def to_paycheck_response(entry: PaycheckEntry) -> PaycheckResponse:
     )
 
 
-def to_paycheck_list_response(entries: Iterable[PaycheckEntry]) -> PaycheckListResponse:
-    return PaycheckListResponse(items=[to_paycheck_response(entry) for entry in entries])
+def to_paycheck_list_response(
+    entries: Iterable[PaycheckEntry], out_of_date: Collection[uuid.UUID] = ()
+) -> PaycheckListResponse:
+    return PaycheckListResponse(
+        items=[to_paycheck_response(entry, out_of_date) for entry in entries]
+    )
 
 
 # --- plans ---------------------------------------------------------------------
@@ -327,6 +337,7 @@ def to_plan_response(details: PlanDetails) -> PlanResponse:
         id=plan.id,
         version=plan.version,
         status=plan.status,
+        is_out_of_date=details.is_out_of_date,
         committed_at=plan.committed_at,
         engine_version=plan.engine_version,
         as_of=plan.as_of,
@@ -337,7 +348,8 @@ def to_plan_response(details: PlanDetails) -> PlanResponse:
                 details.paycheck.expected_amount_cents,
                 details.paycheck,
                 plan,
-            )
+            ),
+            {plan.id} if details.is_out_of_date else (),
         ),
         next_pay_date=plan.next_pay_date,
         paycheck_amount_cents=plan.paycheck_amount_cents,
@@ -439,4 +451,38 @@ def to_balance_snapshot_list_response(
 ) -> BalanceSnapshotListResponse:
     return BalanceSnapshotListResponse(
         items=[to_balance_snapshot_response(snapshot) for snapshot in snapshots]
+    )
+
+
+# --- dashboard -----------------------------------------------------------------
+
+
+def to_dashboard_response(dashboard: Dashboard) -> DashboardResponse:
+    now = dashboard.safe_to_spend
+    safe = None
+    if now is not None and now.entry.plan is not None:
+        safe = SafeToSpendResponse(
+            plan_id=now.entry.plan.id,
+            pay_date=now.entry.pay_date,
+            income_source_name=now.entry.source.name,
+            safe_to_spend_cents=now.safe_to_spend_cents,
+            reserve_deficit_cents=now.reserve_deficit_cents,
+            paid_beyond_reserves_cents=now.paid_beyond_reserves_cents,
+        )
+    return DashboardResponse(
+        today=dashboard.today,
+        current_paycheck=(
+            None
+            if dashboard.current is None
+            else to_paycheck_response(dashboard.current, dashboard.out_of_date)
+        ),
+        next_paycheck=(
+            None
+            if dashboard.next is None
+            else to_paycheck_response(dashboard.next, dashboard.out_of_date)
+        ),
+        safe_to_spend=safe,
+        balance=None
+        if dashboard.balance is None
+        else to_balance_snapshot_response(dashboard.balance),
     )
