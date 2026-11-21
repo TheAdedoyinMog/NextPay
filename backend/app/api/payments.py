@@ -1,4 +1,4 @@
-"""Payments toward bills and debts (ADR 0003, ADR 0011)."""
+"""Payments toward bills and debts, and undoing them (ADR 0003, ADR 0011, ADR 0017)."""
 
 import uuid
 
@@ -50,7 +50,7 @@ def pay_bill(
     payment, created = payments.pay_bill(user, bill_id, to_bill_payment_input(body))
     if not created:
         response.status_code = status.HTTP_200_OK
-    return to_bill_payment_response(payment)
+    return to_bill_payment_response(payment, payments.latest_commit(user.id))
 
 
 @router.get(
@@ -61,7 +61,31 @@ def pay_bill(
 def list_bill_payments(
     bill_id: uuid.UUID, user: CurrentUser, payments: PaymentServiceDep
 ) -> BillPaymentListResponse:
-    return to_bill_payment_list_response(payments.list_bill_payments(user.id, bill_id))
+    return to_bill_payment_list_response(
+        payments.list_bill_payments(user.id, bill_id), payments.latest_commit(user.id)
+    )
+
+
+_UNDO_DESCRIPTION = (
+    "Puts back what the payment took from the money set aside{debt}, and marks it undone: it "
+    "drops out of the payment list and no longer lowers Safe to Spend. The payment is kept as "
+    "history. Undoing it again changes nothing and returns it, so a retry is harmless. Only "
+    "until a plan is committed after the payment: then 409 `payment_undo_too_late`. To pay "
+    "again, record a new payment with a new id."
+)
+
+
+@router.post(
+    "/bills/{bill_id}/payments/{payment_id}/undo",
+    responses=error_responses(401, 404, 409, 422),
+    summary="Undo a bill payment",
+    description=_UNDO_DESCRIPTION.format(debt=""),
+)
+def undo_bill_payment(
+    bill_id: uuid.UUID, payment_id: uuid.UUID, user: CurrentUser, payments: PaymentServiceDep
+) -> BillPaymentResponse:
+    payment = payments.undo_bill_payment(user, bill_id, payment_id)
+    return to_bill_payment_response(payment, payments.latest_commit(user.id))
 
 
 @router.post(
@@ -88,7 +112,7 @@ def pay_debt(
     payment, created = payments.pay_debt(user, debt_id, to_debt_payment_input(body))
     if not created:
         response.status_code = status.HTTP_200_OK
-    return to_debt_payment_response(payment)
+    return to_debt_payment_response(payment, payments.latest_commit(user.id))
 
 
 @router.get(
@@ -99,4 +123,21 @@ def pay_debt(
 def list_debt_payments(
     debt_id: uuid.UUID, user: CurrentUser, payments: PaymentServiceDep
 ) -> DebtPaymentListResponse:
-    return to_debt_payment_list_response(payments.list_debt_payments(user.id, debt_id))
+    return to_debt_payment_list_response(
+        payments.list_debt_payments(user.id, debt_id), payments.latest_commit(user.id)
+    )
+
+
+@router.post(
+    "/debts/{debt_id}/payments/{payment_id}/undo",
+    responses=error_responses(401, 404, 409, 422),
+    summary="Undo a debt payment",
+    description=_UNDO_DESCRIPTION.format(
+        debt=" and what it took off the debt's balance (only what was owed, if it paid more)"
+    ),
+)
+def undo_debt_payment(
+    debt_id: uuid.UUID, payment_id: uuid.UUID, user: CurrentUser, payments: PaymentServiceDep
+) -> DebtPaymentResponse:
+    payment = payments.undo_debt_payment(user, debt_id, payment_id)
+    return to_debt_payment_response(payment, payments.latest_commit(user.id))

@@ -14,6 +14,10 @@
  *   draws the target's reserve down, never below 0, and lowers a debt's balance.
  * - The dashboard's Safe to Spend is the newest committed plan's, less what payments made
  *   after that commit paid beyond their reserves; past $0 it is a shortfall (ADR 0016).
+ * - Undoing a payment puts back what it drew from the reserve and took off the balance, and
+ *   drops it from lists and from Safe to Spend. Undoing it again returns it unchanged. After
+ *   a later commit it is refused (409) and `can_undo` is false (ADR 0017). Unlike the real
+ *   hash, an undo here makes every draft out of date; the backend's tests cover the rest.
  */
 import type { components } from '@/api/schema';
 
@@ -132,6 +136,15 @@ export function createFakePlanning({ json, error, items }: Deps) {
       return plans.map(view);
     },
 
+    /** The next paycheck's plan, made and committed on another device. */
+    commitNextElsewhere(email: string): void {
+      const next = paydays.get(email)?.next;
+      if (!next) throw new Error('fakePlanning: set a next payday first');
+      generate(email, next.income_source_id, next.pay_date);
+      const draft = currentPlan(email, next);
+      if (draft) commit(draft);
+    },
+
     handle(
       method: string,
       path: string,
@@ -157,6 +170,9 @@ export function createFakePlanning({ json, error, items }: Deps) {
         if (method === 'POST' && parts[2] === 'commit') return commit(plan);
       }
       if ((parts[0] === 'bills' || parts[0] === 'debts') && parts[2] === 'payments') {
+        if (method === 'POST' && parts[4] === 'undo') {
+          return undo(email, parts[1] ?? '', parts[3] ?? '');
+        }
         return payment(method, email, parts[0], parts[1] ?? '', body);
       }
       return null;
@@ -173,7 +189,10 @@ export function createFakePlanning({ json, error, items }: Deps) {
     const snapshots = items(email, '/balance-snapshots');
     // Every fake time is NOW, so "after the commit" is told by the order things happened.
     const beyond = [...payments.values()]
-      .filter((p) => p.email === email && newest && (p.order as number) > (newest.order ?? 0))
+      .filter(
+        (p) =>
+          p.email === email && !p.undone_at && newest && (p.order as number) > (newest.order ?? 0),
+      )
       .reduce((sum, p) => sum + (p.beyond as number), 0);
     const free = newest ? newest.safe_to_spend_cents - newest.reserve_deficit_cents - beyond : 0;
     return {
@@ -324,6 +343,53 @@ export function createFakePlanning({ json, error, items }: Deps) {
   /** Counts commits and payments, so the dashboard knows which payments came after a commit. */
   let order = 0;
 
+  /** The order of the user's newest commit, for any paycheck; 0 if none. */
+  const latestCommit = (email: string) =>
+    Math.max(0, ...plans.filter((plan) => plan.email === email).map((plan) => plan.order ?? 0));
+
+  /** A payment as the API returns it. */
+  function shape(record: Item) {
+    const {
+      email,
+      target_id: _t,
+      beyond: _b,
+      order: recorded,
+      drawn: _d,
+      reduced: _r,
+      ...rest
+    } = record;
+    return {
+      ...rest,
+      can_undo: !record.undone_at && (recorded as number) > latestCommit(email as string),
+    };
+  }
+
+  function undo(email: string, targetId: string, paymentId: string): Response {
+    const record = payments.get(paymentId);
+    if (!record || record.email !== email || record.target_id !== targetId) {
+      return error(404, 'not_found', 'Not found.');
+    }
+    if (record.undone_at) return json(200, shape(record));
+    if (!shape(record).can_undo) {
+      return error(
+        409,
+        'payment_undo_too_late',
+        "A newer plan was committed after this payment, so it can't be undone. If the payment didn't happen, correct the balance instead.",
+      );
+    }
+    const kind = 'bill_id' in record ? '/bills' : '/debts';
+    const target = items(email, kind).find((item) => item.id === targetId);
+    if (target) {
+      target.reserved_cents = (target.reserved_cents as number) + (record.drawn as number);
+      if (kind === '/debts') {
+        target.balance_cents = (target.balance_cents as number) + (record.reduced as number);
+      }
+    }
+    record.undone_at = NOW;
+    planning.bump(email);
+    return json(200, shape(record));
+  }
+
   function payment(
     method: string,
     email: string,
@@ -333,15 +399,14 @@ export function createFakePlanning({ json, error, items }: Deps) {
   ) {
     const target = items(email, `/${kind}`).find((item) => item.id === targetId);
     if (!target) return error(404, 'not_found', 'Not found.');
-    const own = [...payments.values()].filter((p) => p.target_id === targetId && p.email === email);
+    const own = [...payments.values()].filter(
+      (p) => p.target_id === targetId && p.email === email && !p.undone_at,
+    );
     if (method === 'GET') {
-      return json(200, {
-        items: own.reverse().map(({ email: _e, target_id: _t, beyond: _b, order: _o, ...p }) => p),
-      });
+      return json(200, { items: own.reverse().map(shape) });
     }
     const id = typeof body.id === 'string' ? body.id : `payment-${payments.size + 1}`;
     const earlier = payments.get(id);
-    const shape = ({ email: _e, target_id: _t, beyond: _b, order: _o, ...p }: Item) => p;
     if (earlier) {
       if (earlier.email !== email || earlier.target_id !== targetId) {
         return error(
@@ -365,7 +430,10 @@ export function createFakePlanning({ json, error, items }: Deps) {
       paid_on: TODAY,
       amount_cents: amount,
       created_at: NOW,
+      undone_at: null,
       beyond: Math.max(amount - (target.reserved_cents as number), 0),
+      drawn: Math.min(amount, target.reserved_cents as number),
+      reduced: kind === 'debts' ? Math.min(amount, target.balance_cents as number) : 0,
       order: ++order,
     };
     payments.set(id, record);

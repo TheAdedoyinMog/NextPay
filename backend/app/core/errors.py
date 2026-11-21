@@ -74,6 +74,16 @@ class PaymentIdConflictError(ConflictError):
     message = "This payment id is already used by another payment. Make a new one."
 
 
+class PaymentUndoTooLateError(ConflictError):
+    """A plan was committed after the payment, and planned around it (ADR 0017)."""
+
+    code = "payment_undo_too_late"
+    message = (
+        "A newer plan was committed after this payment, so it can't be undone. "
+        "If the payment didn't happen, correct the balance instead."
+    )
+
+
 class EmergencyGoalExistsError(ConflictError):
     """The planner funds one emergency fund; a second would be ambiguous."""
 

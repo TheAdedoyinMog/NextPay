@@ -14,14 +14,23 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.main import app
-from app.models import BillPayment, DebtPayment, Paycheck, PaycheckPlan, PlanStatus, Reserve
+from app.models import (
+    BillPayment,
+    Debt,
+    DebtPayment,
+    Paycheck,
+    PaycheckPlan,
+    PlanStatus,
+    Reserve,
+)
 
 type Json = dict[str, Any]
 type Headers = dict[str, str]
 
 PAYDAY = "2026-10-02"
 
-# (name, method, path, body). {job}, {rent}, {car} and {plan} are ids of Ada's.
+# (name, method, path, body). {job}, {rent}, {car}, {plan}, {rent_paid} and {car_paid} are
+# ids of Ada's.
 ROUTES: list[tuple[str, str, str, Json | None]] = [
     ("plan a paycheck", "POST", "/plans", {"income_source_id": "{job}", "pay_date": PAYDAY}),
     ("read a plan", "GET", "/plans/{plan}", None),
@@ -36,13 +45,20 @@ ROUTES: list[tuple[str, str, str, Json | None]] = [
     ("list a bill's payments", "GET", "/bills/{rent}/payments", None),
     ("pay a debt", "POST", "/debts/{car}/payments", {}),
     ("list a debt's payments", "GET", "/debts/{car}/payments", None),
+    ("undo a bill payment", "POST", "/bills/{rent}/payments/{rent_paid}/undo", None),
+    ("undo a debt payment", "POST", "/debts/{car}/payments/{car_paid}/undo", None),
 ]
 
 
 @pytest.fixture
 def adas(client: TestClient, ada: Headers, worked_example: Any) -> dict[str, str]:
-    """Ada's worked example with a draft plan; the ids the routes above need."""
+    """Ada's worked example with a draft plan and a payment toward rent and the car loan;
+    the ids the routes above need."""
     world = worked_example(ada)
+    # Paid before planning, so the draft is current.
+    rent_paid = client.post(f"/bills/{world['rent']['id']}/payments", json={}, headers=ada)
+    car_paid = client.post(f"/debts/{world['car']['id']}/payments", json={}, headers=ada)
+    assert rent_paid.status_code == car_paid.status_code == 201
     plan = client.post(
         "/plans", json={"income_source_id": world["job"]["id"], "pay_date": PAYDAY}, headers=ada
     )
@@ -52,6 +68,8 @@ def adas(client: TestClient, ada: Headers, worked_example: Any) -> dict[str, str
         "rent": world["rent"]["id"],
         "car": world["car"]["id"],
         "plan": plan.json()["id"],
+        "rent_paid": rent_paid.json()["id"],
+        "car_paid": car_paid.json()["id"],
     }
 
 
@@ -72,8 +90,10 @@ def snapshot(session: Session) -> dict[str, Any]:
         ).all(),
         "paychecks": session.execute(select(Paycheck.id, Paycheck.actual_amount_cents)).all(),
         "reserves": session.scalar(select(func.count()).select_from(Reserve)),
-        "bill_payments": session.scalar(select(func.count()).select_from(BillPayment)),
-        "debt_payments": session.scalar(select(func.count()).select_from(DebtPayment)),
+        "reserved": session.scalars(select(Reserve.amount_cents).order_by(Reserve.id)).all(),
+        "bill_payments": session.execute(select(BillPayment.id, BillPayment.undone_at)).all(),
+        "debt_payments": session.execute(select(DebtPayment.id, DebtPayment.undone_at)).all(),
+        "debt_balances": session.scalars(select(Debt.balance_cents).order_by(Debt.id)).all(),
     }
 
 
@@ -111,7 +131,7 @@ def test_every_planning_route_is_in_the_table() -> None:
         # /health has no tags.
         if set(operation.get("tags", [])) & {"plans", "paychecks", "payments"}
     }
-    assert len(planning) == 9
+    assert len(planning) == 11
     covered = {
         (method, path.replace("{job}", "{income_source_id}").replace(PAYDAY, "{pay_date}"))
         for _, method, path, _ in ROUTES
@@ -121,7 +141,9 @@ def test_every_planning_route_is_in_the_table() -> None:
             method,
             path.replace("{plan}", "{plan_id}")
             .replace("{rent}", "{bill_id}")
-            .replace("{car}", "{debt_id}"),
+            .replace("{car}", "{debt_id}")
+            .replace("{rent_paid}", "{payment_id}")
+            .replace("{car_paid}", "{payment_id}"),
         )
         for method, path in covered
     }

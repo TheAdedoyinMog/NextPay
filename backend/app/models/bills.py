@@ -1,9 +1,9 @@
 """Bills and the payments recorded against them."""
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 
-from sqlalchemy import CheckConstraint, Index, String
+from sqlalchemy import CheckConstraint, DateTime, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -54,3 +54,5 @@ class BillPayment(UserOwnedMixin, TimestampsMixin, Base):
     # How much of the payment came out of its reserve; the rest came out of Safe to Spend.
     # Sorted after the timestamps because a migration added it to the table's end.
     reserve_drawn_cents: Mapped[Cents] = mapped_column(sort_order=3)
+    # When the payment was undone (ADR 0017): it then counts for nothing, and is kept as history.
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), sort_order=4)

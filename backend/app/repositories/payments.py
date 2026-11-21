@@ -16,10 +16,10 @@ class BillPaymentRepository(UserOwnedRepository[BillPayment]):
         super().__init__(session, BillPayment, order_by=(BillPayment.paid_on,))
 
     def list_for_bill(self, user_id: uuid.UUID, bill_id: uuid.UUID) -> Sequence[BillPayment]:
-        """One bill's payments, newest first."""
+        """One bill's payments that were not undone, newest first."""
         return self._session.scalars(
             self._owned_by(user_id)
-            .where(BillPayment.bill_id == bill_id)
+            .where(BillPayment.bill_id == bill_id, BillPayment.undone_at.is_(None))
             .order_by(
                 BillPayment.paid_on.desc(), BillPayment.created_at.desc(), BillPayment.id.desc()
             )
@@ -31,13 +31,18 @@ class BillPaymentRepository(UserOwnedRepository[BillPayment]):
         return self._session.get(BillPayment, payment_id)
 
     def unreserved_since(self, user_id: uuid.UUID, since: datetime) -> int:
-        """Cents that payments recorded at or after ``since`` paid beyond their reserves."""
+        """Cents that payments recorded at or after ``since``, and not undone, paid beyond
+        their reserves."""
         total = self._session.scalar(
             select(
                 func.coalesce(
                     func.sum(BillPayment.amount_cents - BillPayment.reserve_drawn_cents), 0
                 )
-            ).where(BillPayment.user_id == user_id, BillPayment.created_at >= since)
+            ).where(
+                BillPayment.user_id == user_id,
+                BillPayment.created_at >= since,
+                BillPayment.undone_at.is_(None),
+            )
         )
         return int(total or 0)
 
@@ -47,10 +52,10 @@ class DebtPaymentRepository(UserOwnedRepository[DebtPayment]):
         super().__init__(session, DebtPayment, order_by=(DebtPayment.paid_on,))
 
     def list_for_debt(self, user_id: uuid.UUID, debt_id: uuid.UUID) -> Sequence[DebtPayment]:
-        """One debt's payments, newest first."""
+        """One debt's payments that were not undone, newest first."""
         return self._session.scalars(
             self._owned_by(user_id)
-            .where(DebtPayment.debt_id == debt_id)
+            .where(DebtPayment.debt_id == debt_id, DebtPayment.undone_at.is_(None))
             .order_by(
                 DebtPayment.paid_on.desc(), DebtPayment.created_at.desc(), DebtPayment.id.desc()
             )
@@ -62,12 +67,17 @@ class DebtPaymentRepository(UserOwnedRepository[DebtPayment]):
         return self._session.get(DebtPayment, payment_id)
 
     def unreserved_since(self, user_id: uuid.UUID, since: datetime) -> int:
-        """Cents that payments recorded at or after ``since`` paid beyond their reserves."""
+        """Cents that payments recorded at or after ``since``, and not undone, paid beyond
+        their reserves."""
         total = self._session.scalar(
             select(
                 func.coalesce(
                     func.sum(DebtPayment.amount_cents - DebtPayment.reserve_drawn_cents), 0
                 )
-            ).where(DebtPayment.user_id == user_id, DebtPayment.created_at >= since)
+            ).where(
+                DebtPayment.user_id == user_id,
+                DebtPayment.created_at >= since,
+                DebtPayment.undone_at.is_(None),
+            )
         )
         return int(total or 0)

@@ -61,7 +61,7 @@ with `/auth/register` or `/auth/login`, then send the access token as a Bearer t
 | `/paychecks` | `GET` (the timeline of paydays) |
 | `/income-sources/{id}/paychecks/{pay_date}` | `PUT` (record what actually arrived) |
 | `/plans` | `POST` (plan a paycheck), `GET /{id}`, `POST /{id}/commit` |
-| `/bills/{id}/payments`, `/debts/{id}/payments` | `POST`, `GET` (send an `id` you made so a retry pays once) |
+| `/bills/{id}/payments`, `/debts/{id}/payments` | `POST`, `GET` (send an `id` you made so a retry pays once), `POST /{payment_id}/undo` |
 | `/dashboard` | `GET` (today, current and next paydays, Safe to Spend, balance) |
 
 Money is integer cents. `PUT` replaces the whole resource, so every field is required and
@@ -75,6 +75,8 @@ what the plan put toward bills, debts and goals; paying a bill or debt draws tha
 How plans, commits and payments work, and one known limitation: ADR 0011. A plan says
 `is_out_of_date` when commit would refuse it; how every money action is safe to repeat: ADR 0015.
 The dashboard's Safe to Spend falls when a payment goes beyond what was set aside: ADR 0016.
+A payment can be undone until the next plan is committed, which puts back exactly what it
+took: ADR 0017.
 
 ### The mobile app
 

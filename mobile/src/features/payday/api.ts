@@ -5,6 +5,7 @@
  * Every money action is safe to repeat. Recording an amount is a PUT. Planning the same
  * paycheck from the same inputs returns the same draft. Committing a committed plan returns
  * it unchanged. A payment carries an id the app made, so a retry returns the first payment.
+ * Undoing an undone payment returns it unchanged (ADR 0017).
  */
 import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -152,6 +153,37 @@ export function usePayDebt() {
         api.POST('/debts/{debt_id}/payments', {
           params: { path: { debt_id: args.debtId } },
           body: { id: args.paymentId },
+        }),
+      ),
+    onSuccess: () => afterMoneyMoved(queryClient),
+  });
+}
+
+/**
+ * Undoes a bill payment: the server puts back what it drew from the reserve. Undoing it again
+ * returns it unchanged, so a double tap or a retry undoes it once.
+ */
+export function useUndoBillPayment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { billId: string; paymentId: string }) =>
+      unwrap(
+        api.POST('/bills/{bill_id}/payments/{payment_id}/undo', {
+          params: { path: { bill_id: args.billId, payment_id: args.paymentId } },
+        }),
+      ),
+    onSuccess: () => afterMoneyMoved(queryClient),
+  });
+}
+
+/** Undoes a debt payment: the reserve and the balance go back. Safe to repeat, as for bills. */
+export function useUndoDebtPayment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { debtId: string; paymentId: string }) =>
+      unwrap(
+        api.POST('/debts/{debt_id}/payments/{payment_id}/undo', {
+          params: { path: { debt_id: args.debtId, payment_id: args.paymentId } },
         }),
       ),
     onSuccess: () => afterMoneyMoved(queryClient),

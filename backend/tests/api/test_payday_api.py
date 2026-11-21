@@ -4,6 +4,7 @@
 - ``is_out_of_date`` on plans: what commit would refuse, known before committing.
 - A client-made payment ``id``: a repeated payment request records one payment.
 - Safe to Spend on the dashboard falls by what a payment pays beyond its reserve (ADR 0016).
+- Undoing a payment puts back exactly what it took, once, until the next commit (ADR 0017).
 
 The setup is the design doc's worked example: $1,500 every two weeks from Friday,
 Oct 2, 2026. The fake clock is at noon UTC on Oct 7, so the current paycheck is
@@ -442,3 +443,249 @@ def test_without_an_id_each_request_is_a_new_payment(
     client.post(f"/bills/{rent['id']}/payments", json={}, headers=ada)
 
     assert db_session.scalar(select(func.count()).select_from(BillPayment)) == 2
+
+
+# --- undoing a payment (ADR 0017) ----------------------------------------------
+
+
+def pay_debt(client: TestClient, headers: Headers, debt: Json, **body: Any) -> Json:
+    response = client.post(f"/debts/{debt['id']}/payments", json=body, headers=headers)
+    assert response.status_code in (200, 201), response.text
+    return dict(response.json())
+
+
+def undo_debt(client: TestClient, headers: Headers, debt: Json, payment: Json) -> Any:
+    return client.post(f"/debts/{debt['id']}/payments/{payment['id']}/undo", headers=headers)
+
+
+def debt_balance(client: TestClient, headers: Headers, debt: Json) -> int:
+    return int(client.get(f"/debts/{debt['id']}", headers=headers).json()["balance_cents"])
+
+
+def test_undo_puts_safe_to_spend_the_reserve_and_the_balance_back_exactly(
+    client: TestClient, ada: Headers, worked_example: Any, db_session: Session
+) -> None:
+    """$75 set aside for the car's $150 minimum: paying takes $75 from Safe to Spend, and
+    undoing it gives the $75 back and refills the reserve."""
+    world = worked_example(ada)
+    car = world["car"]
+    commit(client, ada, plan(client, ada, world["job"]))
+    assert safe_now(client, ada) == (75_833, 0, 0)
+
+    payment = pay_debt(client, ada, car, id=str(uuid.uuid4()))
+    assert safe_now(client, ada) == (68_333, 0, 7_500)
+    assert reserved(db_session, debt_id=uuid.UUID(car["id"])) == 0
+    assert debt_balance(client, ada, car) == 885_000
+
+    response = undo_debt(client, ada, car, payment)
+
+    assert response.status_code == 200, response.text
+    undone = response.json()
+    assert undone["id"] == payment["id"]
+    assert undone["undone_at"] is not None
+    assert undone["can_undo"] is False
+    assert safe_now(client, ada) == (75_833, 0, 0)
+    assert reserved(db_session, debt_id=uuid.UUID(car["id"])) == 7_500
+    assert debt_balance(client, ada, car) == 900_000
+    # Kept as history, but no longer listed.
+    assert db_session.scalar(select(func.count()).select_from(DebtPayment)) == 1
+    listed = client.get(f"/debts/{car['id']}/payments", headers=ada).json()
+    assert listed == {"items": []}
+
+
+def test_undoing_a_covered_bill_payment_leaves_safe_to_spend_alone(
+    client: TestClient, ada: Headers, worked_example: Any, db_session: Session
+) -> None:
+    world = worked_example(ada)
+    rent = world["rent"]
+    commit(client, ada, plan(client, ada, world["job"]))
+    payment = client.post(
+        f"/bills/{rent['id']}/payments", json={"amount_cents": 40_000}, headers=ada
+    ).json()
+    assert reserved(db_session, bill_id=uuid.UUID(rent["id"])) == 0
+
+    response = client.post(f"/bills/{rent['id']}/payments/{payment['id']}/undo", headers=ada)
+
+    assert response.status_code == 200, response.text
+    assert safe_now(client, ada) == (75_833, 0, 0)
+    assert reserved(db_session, bill_id=uuid.UUID(rent["id"])) == 40_000
+    assert client.get(f"/bills/{rent['id']}/payments", headers=ada).json() == {"items": []}
+
+
+def test_a_repeated_undo_undoes_once(
+    client: TestClient, ada: Headers, worked_example: Any, db_session: Session
+) -> None:
+    """A double tap, or a retry after the first reply was lost: the second request finds the
+    payment already undone and changes nothing."""
+    world = worked_example(ada)
+    car = world["car"]
+    commit(client, ada, plan(client, ada, world["job"]))
+    payment = pay_debt(client, ada, car)
+
+    first = undo_debt(client, ada, car, payment)
+    second = undo_debt(client, ada, car, payment)
+
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+    assert reserved(db_session, debt_id=uuid.UUID(car["id"])) == 7_500
+    assert debt_balance(client, ada, car) == 900_000
+    assert safe_now(client, ada) == (75_833, 0, 0)
+
+
+def test_a_retry_of_an_undo_the_next_day_still_undoes_once(
+    client: TestClient, ada: Headers, worked_example: Any, db_session: Session, clock: Any
+) -> None:
+    world = worked_example(ada)
+    car = world["car"]
+    commit(client, ada, plan(client, ada, world["job"]))
+    payment = pay_debt(client, ada, car)
+    first = undo_debt(client, ada, car, payment).json()
+    clock.advance(timedelta(days=1))
+    ada = sign_in_again(client, "ada@example.com")
+
+    second = undo_debt(client, ada, car, payment)
+
+    assert second.status_code == 200
+    assert second.json() == first
+    assert reserved(db_session, debt_id=uuid.UUID(car["id"])) == 7_500
+
+
+def test_undoing_an_overpayment_puts_back_only_what_was_owed(
+    client: TestClient, ada: Headers, db_session: Session
+) -> None:
+    """$100 owed, $150 paid: the balance stopped at $0, so undo puts back $100, not $150."""
+    card = client.post(
+        "/debts",
+        json={
+            "name": "Store card",
+            "balance_cents": 10_000,
+            "apr_bps": 2_499,
+            "minimum_payment_cents": 2_500,
+            "due_day": 15,
+        },
+        headers=ada,
+    ).json()
+    payment = pay_debt(client, ada, card, amount_cents=15_000)
+    assert debt_balance(client, ada, card) == 0
+
+    undo_debt(client, ada, card, payment)
+
+    assert debt_balance(client, ada, card) == 10_000
+    row = db_session.get(DebtPayment, uuid.UUID(payment["id"]))
+    assert row is not None and row.balance_reduced_cents == 10_000
+
+
+def test_a_payment_cannot_be_undone_after_a_later_commit(
+    client: TestClient, ada: Headers, worked_example: Any, db_session: Session, clock: Any
+) -> None:
+    """The Oct 16 plan was made around the empty car reserve; refilling it now would hold
+    the same $75 twice."""
+    world = worked_example(ada)
+    car = world["car"]
+    commit(client, ada, plan(client, ada, world["job"]))
+    payment = pay_debt(client, ada, car)
+    clock.advance(timedelta(minutes=1))
+    commit(client, ada, plan(client, ada, world["job"], "2026-10-16"))
+    reserve_before = reserved(db_session, debt_id=uuid.UUID(car["id"]))
+
+    response = undo_debt(client, ada, car, payment)
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "payment_undo_too_late"
+    assert reserved(db_session, debt_id=uuid.UUID(car["id"])) == reserve_before
+    assert debt_balance(client, ada, car) == 885_000
+    listed = client.get(f"/debts/{car['id']}/payments", headers=ada).json()["items"]
+    assert [(item["id"], item["can_undo"]) for item in listed] == [(payment["id"], False)]
+
+
+def test_undo_makes_a_draft_from_before_the_payment_current_again(
+    client: TestClient, ada: Headers, worked_example: Any
+) -> None:
+    """Out of date is the hash of today's inputs, never stored. The payment changed the car's
+    reserve and balance; undo puts both back exactly, so the earlier draft matches again."""
+    world = worked_example(ada)
+    car = world["car"]
+    commit(client, ada, plan(client, ada, world["job"]))
+    draft = plan(client, ada, world["job"], "2026-10-16")
+    payment = pay_debt(client, ada, car)
+    assert client.get(f"/plans/{draft['id']}", headers=ada).json()["is_out_of_date"] is True
+
+    undo_debt(client, ada, car, payment)
+
+    assert client.get(f"/plans/{draft['id']}", headers=ada).json()["is_out_of_date"] is False
+    assert dashboard(client, ada)["next_paycheck"]["plan"]["is_out_of_date"] is False
+    commit(client, ada, draft)
+
+
+def test_undo_makes_a_draft_made_after_the_payment_out_of_date(
+    client: TestClient, ada: Headers, worked_example: Any
+) -> None:
+    world = worked_example(ada)
+    car = world["car"]
+    commit(client, ada, plan(client, ada, world["job"]))
+    payment = pay_debt(client, ada, car)
+    after_payment = plan(client, ada, world["job"], "2026-10-16")
+
+    undo_debt(client, ada, car, payment)
+
+    read = client.get(f"/plans/{after_payment['id']}", headers=ada).json()
+    assert read["is_out_of_date"] is True
+    refused = client.post(f"/plans/{after_payment['id']}/commit", headers=ada)
+    assert refused.json()["error"]["code"] == "plan_out_of_date"
+
+
+def test_an_undone_payment_can_be_paid_again_as_a_new_payment(
+    client: TestClient, ada: Headers, worked_example: Any, db_session: Session
+) -> None:
+    world = worked_example(ada)
+    car = world["car"]
+    commit(client, ada, plan(client, ada, world["job"]))
+    first = pay_debt(client, ada, car, id=str(uuid.uuid4()))
+    undo_debt(client, ada, car, first)
+
+    again = client.post(f"/debts/{car['id']}/payments", json={"id": str(uuid.uuid4())}, headers=ada)
+
+    assert again.status_code == 201
+    assert again.json()["can_undo"] is True
+    assert safe_now(client, ada) == (68_333, 0, 7_500)
+    assert reserved(db_session, debt_id=uuid.UUID(car["id"])) == 0
+    assert debt_balance(client, ada, car) == 885_000
+    listed = client.get(f"/debts/{car['id']}/payments", headers=ada).json()["items"]
+    assert [item["id"] for item in listed] == [again.json()["id"]]
+
+
+def test_the_undone_payments_own_id_is_a_retry_not_a_new_payment(
+    client: TestClient, ada: Headers, worked_example: Any, db_session: Session
+) -> None:
+    """A late retry of the original "Mark paid" must not bring an undone payment back."""
+    world = worked_example(ada)
+    car = world["car"]
+    commit(client, ada, plan(client, ada, world["job"]))
+    body = {"id": str(uuid.uuid4())}
+    first = pay_debt(client, ada, car, **body)
+    undo_debt(client, ada, car, first)
+
+    retry = client.post(f"/debts/{car['id']}/payments", json=body, headers=ada)
+
+    assert retry.status_code == 200
+    assert retry.json()["undone_at"] is not None
+    assert safe_now(client, ada) == (75_833, 0, 0)
+    assert debt_balance(client, ada, car) == 900_000
+    assert db_session.scalar(select(func.count()).select_from(DebtPayment)) == 1
+
+
+def test_a_payment_is_undone_only_through_its_own_bill_or_debt(
+    client: TestClient, ada: Headers, worked_example: Any
+) -> None:
+    world = worked_example(ada)
+    rent_paid = client.post(f"/bills/{world['rent']['id']}/payments", json={}, headers=ada).json()
+    car_paid = pay_debt(client, ada, world["car"])
+
+    wrong_debt = client.post(
+        f"/debts/{world['car']['id']}/payments/{rent_paid['id']}/undo", headers=ada
+    )
+    wrong_bill = client.post(
+        f"/bills/{world['rent']['id']}/payments/{car_paid['id']}/undo", headers=ada
+    )
+
+    assert wrong_debt.status_code == wrong_bill.status_code == 404

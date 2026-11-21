@@ -472,6 +472,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/bills/{bill_id}/payments/{payment_id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo a bill payment
+         * @description Puts back what the payment took from the money set aside, and marks it undone: it drops out of the payment list and no longer lowers Safe to Spend. The payment is kept as history. Undoing it again changes nothing and returns it, so a retry is harmless. Only until a plan is committed after the payment: then 409 `payment_undo_too_late`. To pay again, record a new payment with a new id.
+         */
+        post: operations["undo_bill_payment_bills__bill_id__payments__payment_id__undo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/debts/{debt_id}/payments": {
         parameters: {
             query?: never;
@@ -487,6 +507,26 @@ export interface paths {
          * @description Send `{}` to record this month's minimum, paid today. The debt's balance and the money set aside for it both go down by the amount paid, never below $0. Send an `id` you made so a retry can't pay twice.
          */
         post: operations["pay_debt_debts__debt_id__payments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/debts/{debt_id}/payments/{payment_id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo a debt payment
+         * @description Puts back what the payment took from the money set aside and what it took off the debt's balance (only what was owed, if it paid more), and marks it undone: it drops out of the payment list and no longer lowers Safe to Spend. The payment is kept as history. Undoing it again changes nothing and returns it, so a retry is harmless. Only until a plan is committed after the payment: then 409 `payment_undo_too_late`. To pay again, record a new payment with a new id.
+         */
+        post: operations["undo_debt_payment_debts__debt_id__payments__payment_id__undo_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -694,6 +734,16 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /**
+             * Undone At
+             * @description When the payment was undone; it then counts for nothing. Undone payments are left out of payment lists, so this is set only on the reply to an undo, or to a retry of the original payment.
+             */
+            undone_at: string | null;
+            /**
+             * Can Undo
+             * @description Whether POST .../undo would undo it: not once undone, and not once a plan was committed after it (ADR 0017).
+             */
+            can_undo: boolean;
         };
         /**
          * BillRequest
@@ -839,6 +889,16 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /**
+             * Undone At
+             * @description When the payment was undone; it then counts for nothing. Undone payments are left out of payment lists, so this is set only on the reply to an undo, or to a retry of the original payment.
+             */
+            undone_at: string | null;
+            /**
+             * Can Undo
+             * @description Whether POST .../undo would undo it: not once undone, and not once a plan was committed after it (ADR 0017).
+             */
+            can_undo: boolean;
         };
         /**
          * DebtRequest
@@ -3284,6 +3344,65 @@ export interface operations {
             };
         };
     };
+    undo_bill_payment_bills__bill_id__payments__payment_id__undo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                bill_id: string;
+                payment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillPaymentResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_debt_payments_debts__debt_id__payments_get: {
         parameters: {
             query?: never;
@@ -3359,6 +3478,65 @@ export interface operations {
             };
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DebtPaymentResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    undo_debt_payment_debts__debt_id__payments__payment_id__undo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                debt_id: string;
+                payment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

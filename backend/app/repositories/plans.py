@@ -2,8 +2,9 @@
 
 import uuid
 from collections.abc import Collection, Sequence
+from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Allocation, GoalProjection, PaycheckPlan, PlanStatus
@@ -42,6 +43,12 @@ class PlanRepository(UserOwnedRepository[PaycheckPlan]):
         )
         # Later versions overwrite earlier ones.
         return {plan.paycheck_id: plan for plan in plans}
+
+    def latest_commit(self, user_id: uuid.UUID) -> datetime | None:
+        """When the user last committed a plan, for any paycheck; None if never."""
+        return self._session.scalar(
+            select(func.max(PaycheckPlan.committed_at)).where(PaycheckPlan.user_id == user_id)
+        )
 
     def add_plan(
         self,

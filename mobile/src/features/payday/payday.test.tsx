@@ -1,6 +1,7 @@
 /**
  * The payday loop through the whole app: dashboard, recording the paycheck, the plan,
- * committing, marking paid, out-of-date plans, and repeated requests (ADR 0015).
+ * committing, marking paid, undoing a payment, out-of-date plans, and repeated requests
+ * (ADR 0015, ADR 0017).
  */
 import { router } from 'expo-router';
 import { act, fireEvent, screen, waitFor } from 'expo-router/testing-library';
@@ -349,7 +350,7 @@ describe('marking paid', () => {
     const confirmation = captureConfirmations();
     await fireEvent.press(await screen.findByRole('button', { name: 'Mark Rent paid' }));
     expect(jest.mocked(Alert.alert).mock.calls.at(-1)?.[1]).toBe(
-      'Records $800.00 paid today for the Dec 1, 2026 bill. This can’t be undone yet.',
+      'Records $800.00 paid today for the Dec 1, 2026 bill. You can undo it until your next plan is committed.',
     );
 
     const pay = confirmation();
@@ -437,5 +438,117 @@ describe('the time zone', () => {
     });
     await screen.findByText('No plan yet.');
     expect(backend.count('PUT /me/settings')).toBe(1);
+  });
+});
+
+describe('undoing a payment', () => {
+  /** On the committed plan: marks Rent paid ($400 set aside, $800 paid) and returns its id. */
+  async function payRent(): Promise<string> {
+    const confirmation = captureConfirmations();
+    await fireEvent.press(await screen.findByRole('button', { name: 'Mark Rent paid' }));
+    confirmation()();
+    await screen.findByText('✓ Paid $800.00 on Nov 20, 2026');
+    return (backend.lastBody(`POST /bills/${ids.rent}/payments`) as { id: string }).id;
+  }
+
+  it('puts the reserve and Safe to Spend on Home back, after asking', async () => {
+    await makeDraft();
+    await commitDraft();
+    await payRent();
+    expect(screen.getByText('Set aside now: $0.00')).toBeTruthy();
+    const confirmation = captureConfirmations();
+
+    await fireEvent.press(screen.getByRole('button', { name: 'Undo the Rent payment' }));
+    expect(jest.mocked(Alert.alert).mock.calls.at(-1)?.slice(0, 2)).toEqual([
+      'Undo the Rent payment?',
+      'Removes the $800.00 payment from Nov 20, 2026 and puts back what it took from the money set aside. Safe to Spend on Home updates. You can mark it paid again.',
+    ]);
+    confirmation()();
+
+    expect(await screen.findByRole('button', { name: 'Mark Rent paid' })).toBeTruthy();
+    expect(screen.getByText('Set aside now: $400.00')).toBeTruthy();
+    expect(backend.items(EMAIL, '/bills')[0]?.reserved_cents).toBe(40000);
+    await act(() => router.back());
+    expect(await screen.findByText('$758.33')).toBeTruthy();
+    expect(screen.queryByText(/beyond what was set/)).toBeNull();
+  });
+
+  it('undoes once when Undo is confirmed twice', async () => {
+    await makeDraft();
+    await commitDraft();
+    const paymentId = await payRent();
+    const confirmation = captureConfirmations();
+    await fireEvent.press(screen.getByRole('button', { name: 'Undo the Rent payment' }));
+
+    const undo = confirmation();
+    undo();
+    undo();
+
+    expect(await screen.findByRole('button', { name: 'Mark Rent paid' })).toBeTruthy();
+    expect(backend.count(`POST /bills/${ids.rent}/payments/${paymentId}/undo`)).toBeGreaterThan(0);
+    expect(backend.items(EMAIL, '/bills')[0]?.reserved_cents).toBe(40000);
+  });
+
+  it('undoes once when the first reply was lost and the user retries', async () => {
+    await makeDraft();
+    await commitDraft();
+    const paymentId = await payRent();
+    const call = `POST /bills/${ids.rent}/payments/${paymentId}/undo`;
+    backend.loseResponseNext(call);
+    const confirmation = captureConfirmations();
+    await fireEvent.press(screen.getByRole('button', { name: 'Undo the Rent payment' }));
+    confirmation()();
+
+    await fireEvent.press(
+      await screen.findByRole('button', { name: 'Try undoing the Rent payment again' }),
+    );
+
+    expect(await screen.findByRole('button', { name: 'Mark Rent paid' })).toBeTruthy();
+    expect(backend.count(call)).toBe(2);
+    expect(backend.items(EMAIL, '/bills')[0]?.reserved_cents).toBe(40000);
+  });
+
+  it('records paying again as a new payment', async () => {
+    await makeDraft();
+    await commitDraft();
+    const first = await payRent();
+    const undoConfirmation = captureConfirmations();
+    await fireEvent.press(screen.getByRole('button', { name: 'Undo the Rent payment' }));
+    undoConfirmation()();
+    await screen.findByRole('button', { name: 'Mark Rent paid' });
+
+    const second = await payRent();
+
+    expect(second).not.toBe(first);
+    expect(backend.items(EMAIL, '/bills')[0]?.reserved_cents).toBe(0);
+    await act(() => router.back());
+    expect(await screen.findByText('$358.33')).toBeTruthy();
+  });
+
+  it('is replaced by a hint once a later plan was committed', async () => {
+    await makeDraft();
+    await commitDraft();
+    await payRent();
+    const confirmation = captureConfirmations();
+    await fireEvent.press(screen.getByRole('button', { name: 'Mark Car loan paid' }));
+    confirmation()();
+    await screen.findByRole('button', { name: 'Undo the Car loan payment' });
+    expect(screen.getByRole('button', { name: 'Undo the Rent payment' })).toBeTruthy();
+    expect(screen.queryByText(/Can't undo/)).toBeNull();
+
+    backend.planning.commitNextElsewhere(EMAIL);
+    await setupChangedElsewhere();
+
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Undo the Rent payment' })).toBeNull(),
+    );
+    expect(screen.queryByRole('button', { name: 'Undo the Car loan payment' })).toBeNull();
+    expect(screen.getByText('✓ Paid $800.00 on Nov 20, 2026')).toBeTruthy();
+    expect(screen.getByText('✓ Paid $150.00 on Nov 20, 2026')).toBeTruthy();
+    // A bill has no balance to correct; a debt is pointed to Setup.
+    expect(screen.getByText("Can't undo after a newer plan.")).toBeTruthy();
+    expect(
+      screen.getByText("Can't undo after a newer plan. To correct the balance, edit it in Setup."),
+    ).toBeTruthy();
   });
 });

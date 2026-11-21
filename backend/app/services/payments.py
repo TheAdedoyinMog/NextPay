@@ -7,6 +7,11 @@ Spend (ADR 0016). A debt
 payment also lowers what is owed. Balances are not touched: a balance is what
 the user says they have, when they say it.
 
+Undoing a payment puts back exactly what it took, and keeps the row as history
+(ADR 0017). It is allowed until a plan is committed after the payment: that plan
+was made around the drawn-down reserve, so putting the reserve back then would
+hold the same money twice.
+
 Known limitation (ADR 0011): the planner does not know which occurrence of a
 bill is paid. A bill paid before the last paycheck ahead of its due date is
 reserved for again by that paycheck's plan; the extra then covers the next
@@ -17,16 +22,25 @@ than it needs to be.
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Protocol
 
 from app.core.clock import Clock, local_date
-from app.core.errors import InvalidInputError, NotFoundError, PaymentIdConflictError
+from app.core.errors import (
+    InvalidInputError,
+    NotFoundError,
+    PaymentIdConflictError,
+    PaymentUndoTooLateError,
+)
 from app.models import Bill, BillPayment, Debt, DebtPayment, User
 from app.services.engine_mapping import to_engine_bill
 from app.services.protocols import Transaction, UserLock
-from app.services.reserves import ReserveStore, draw_down_reserve
+from app.services.reserves import ReserveStore, add_to_reserve, draw_down_reserve
 from nextpay_engine import ReserveKind
+
+
+class CommitTimes(Protocol):
+    def latest_commit(self, user_id: uuid.UUID) -> datetime | None: ...
 
 
 class BillLookup(Protocol):
@@ -95,6 +109,17 @@ def is_due_date(bill: Bill, day: date) -> bool:
     return to_engine_bill(bill).recurrence.due_dates_between(day, day) == (day,)
 
 
+def can_undo(payment: BillPayment | DebtPayment, latest_commit: datetime | None) -> bool:
+    """Whether ``payment`` can still be undone, given when the user last committed a plan.
+
+    Not once undone, and not once a plan was committed after it. A payment recorded at the
+    commit's own instant counts as after it, as it does for Safe to Spend (ADR 0016).
+    """
+    if payment.undone_at is not None:
+        return False
+    return latest_commit is None or payment.created_at >= latest_commit
+
+
 def _require_amount(amount_cents: int) -> None:
     if type(amount_cents) is not int or amount_cents <= 0:
         raise InvalidInputError("A payment must be more than $0.")
@@ -110,6 +135,7 @@ class PaymentService:
         debts: DebtLookup,
         debt_payments: DebtPaymentStore,
         reserves: ReserveStore,
+        plans: CommitTimes,
         transaction: Transaction,
         clock: Clock,
     ) -> None:
@@ -119,6 +145,7 @@ class PaymentService:
         self._debts = debts
         self._debt_payments = debt_payments
         self._reserves = reserves
+        self._plans = plans
         self._transaction = transaction
         self._clock = clock
 
@@ -213,16 +240,75 @@ class PaymentService:
                 paid_on=data.paid_on or local_date(self._clock(), user.timezone),
                 amount_cents=amount_cents,
                 reserve_drawn_cents=drawn,
+                balance_reduced_cents=min(amount_cents, debt.balance_cents),
                 created_at=self._clock(),
             )
         )
-        debt.balance_cents = max(debt.balance_cents - amount_cents, 0)
+        debt.balance_cents -= payment.balance_reduced_cents
         self._transaction.commit()
         return payment, True
 
     def list_debt_payments(self, user_id: uuid.UUID, debt_id: uuid.UUID) -> Sequence[DebtPayment]:
         """A debt's payments, newest first. Raises ``NotFoundError``."""
         return self._debt_payments.list_for_debt(user_id, self._debt(user_id, debt_id).id)
+
+    def latest_commit(self, user_id: uuid.UUID) -> datetime | None:
+        """When ``user_id`` last committed a plan, for ``can_undo``."""
+        return self._plans.latest_commit(user_id)
+
+    def undo_bill_payment(
+        self, user: User, bill_id: uuid.UUID, payment_id: uuid.UUID
+    ) -> BillPayment:
+        """Undo a bill payment: what it drew from the reserve goes back, and it is marked
+        undone. Undoing it again changes nothing and returns it, so a retry is harmless.
+
+        Raises ``NotFoundError`` (also for another user's payment, or one for another
+        bill) and ``PaymentUndoTooLateError`` once a plan was committed after it.
+        """
+        self._users.lock(user.id)
+        payment = self._bill_payments.find_any_owner(payment_id)
+        if payment is None or payment.user_id != user.id or payment.bill_id != bill_id:
+            raise NotFoundError()
+        if payment.undone_at is not None:
+            return payment
+        self._check_undoable(user.id, payment)
+        if payment.reserve_drawn_cents:
+            add_to_reserve(
+                self._reserves, user.id, ReserveKind.BILL, bill_id, payment.reserve_drawn_cents
+            )
+        payment.undone_at = self._clock()
+        self._transaction.commit()
+        return payment
+
+    def undo_debt_payment(
+        self, user: User, debt_id: uuid.UUID, payment_id: uuid.UUID
+    ) -> DebtPayment:
+        """Undo a debt payment: what it drew from the reserve goes back, and so does what
+        it took off the balance (only what was owed, if it paid more). Undoing it again
+        changes nothing and returns it.
+
+        Raises ``NotFoundError`` and ``PaymentUndoTooLateError``, as for bills.
+        """
+        self._users.lock(user.id)
+        payment = self._debt_payments.find_any_owner(payment_id)
+        if payment is None or payment.user_id != user.id or payment.debt_id != debt_id:
+            raise NotFoundError()
+        if payment.undone_at is not None:
+            return payment
+        self._check_undoable(user.id, payment)
+        debt = self._debt(user.id, debt_id)
+        if payment.reserve_drawn_cents:
+            add_to_reserve(
+                self._reserves, user.id, ReserveKind.DEBT, debt_id, payment.reserve_drawn_cents
+            )
+        debt.balance_cents += payment.balance_reduced_cents
+        payment.undone_at = self._clock()
+        self._transaction.commit()
+        return payment
+
+    def _check_undoable(self, user_id: uuid.UUID, payment: BillPayment | DebtPayment) -> None:
+        if not can_undo(payment, self._plans.latest_commit(user_id)):
+            raise PaymentUndoTooLateError()
 
     def _bill(self, user_id: uuid.UUID, bill_id: uuid.UUID) -> Bill:
         bill = self._bills.get(user_id, bill_id)

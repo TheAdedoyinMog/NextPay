@@ -378,7 +378,7 @@ export function createFakeBackend() {
       path === '/dashboard' ||
       path.startsWith('/plans') ||
       /^\/income-sources\/[^/]+\/paychecks\//.test(path) ||
-      /^\/(bills|debts)\/[^/]+\/payments$/.test(path);
+      /^\/(bills|debts)\/[^/]+\/payments(\/[^/]+\/undo)?$/.test(path);
     if (!isSettings && !isPlanning) {
       return null;
     }

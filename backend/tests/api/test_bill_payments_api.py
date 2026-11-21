@@ -75,7 +75,17 @@ def test_marking_a_bill_paid_takes_an_empty_body(
 
     assert response.status_code == 201, response.text
     payment = response.json()
-    assert set(payment) == {"id", "bill_id", "due_date", "paid_on", "amount_cents", "created_at"}
+    assert set(payment) == {
+        "id",
+        "bill_id",
+        "due_date",
+        "paid_on",
+        "amount_cents",
+        "created_at",
+        "undone_at",
+        "can_undo",
+    }
+    assert (payment["undone_at"], payment["can_undo"]) == (None, True)
     assert payment["bill_id"] == rent["id"]
     assert (payment["amount_cents"], payment["paid_on"], payment["due_date"]) == (
         80_000,

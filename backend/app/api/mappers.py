@@ -7,6 +7,7 @@ a response if someone adds it here.
 
 import uuid
 from collections.abc import Collection, Iterable, Mapping
+from datetime import datetime
 
 from app.models import (
     BalanceSnapshot,
@@ -59,7 +60,7 @@ from app.services.essential_expenses import EssentialExpenseInput
 from app.services.goals import GoalInput
 from app.services.income_sources import IncomeSourceInput
 from app.services.paychecks import PaycheckEntry
-from app.services.payments import BillPaymentInput, DebtPaymentInput
+from app.services.payments import BillPaymentInput, DebtPaymentInput, can_undo
 from app.services.plan_records import ExplainedAllocation, ExplainedProjection, PlanDetails
 from app.services.settings import SettingsInput
 
@@ -130,7 +131,9 @@ def to_bill_payment_input(body: BillPaymentRequest) -> BillPaymentInput:
     )
 
 
-def to_bill_payment_response(payment: BillPayment) -> BillPaymentResponse:
+def to_bill_payment_response(
+    payment: BillPayment, latest_commit: datetime | None
+) -> BillPaymentResponse:
     return BillPaymentResponse(
         id=payment.id,
         bill_id=payment.bill_id,
@@ -138,12 +141,16 @@ def to_bill_payment_response(payment: BillPayment) -> BillPaymentResponse:
         paid_on=payment.paid_on,
         amount_cents=payment.amount_cents,
         created_at=payment.created_at,
+        undone_at=payment.undone_at,
+        can_undo=can_undo(payment, latest_commit),
     )
 
 
-def to_bill_payment_list_response(payments: Iterable[BillPayment]) -> BillPaymentListResponse:
+def to_bill_payment_list_response(
+    payments: Iterable[BillPayment], latest_commit: datetime | None
+) -> BillPaymentListResponse:
     return BillPaymentListResponse(
-        items=[to_bill_payment_response(payment) for payment in payments]
+        items=[to_bill_payment_response(payment, latest_commit) for payment in payments]
     )
 
 
@@ -209,19 +216,25 @@ def to_debt_payment_input(body: DebtPaymentRequest) -> DebtPaymentInput:
     return DebtPaymentInput(id=body.id, amount_cents=body.amount_cents, paid_on=body.paid_on)
 
 
-def to_debt_payment_response(payment: DebtPayment) -> DebtPaymentResponse:
+def to_debt_payment_response(
+    payment: DebtPayment, latest_commit: datetime | None
+) -> DebtPaymentResponse:
     return DebtPaymentResponse(
         id=payment.id,
         debt_id=payment.debt_id,
         paid_on=payment.paid_on,
         amount_cents=payment.amount_cents,
         created_at=payment.created_at,
+        undone_at=payment.undone_at,
+        can_undo=can_undo(payment, latest_commit),
     )
 
 
-def to_debt_payment_list_response(payments: Iterable[DebtPayment]) -> DebtPaymentListResponse:
+def to_debt_payment_list_response(
+    payments: Iterable[DebtPayment], latest_commit: datetime | None
+) -> DebtPaymentListResponse:
     return DebtPaymentListResponse(
-        items=[to_debt_payment_response(payment) for payment in payments]
+        items=[to_debt_payment_response(payment, latest_commit) for payment in payments]
     )
 
 

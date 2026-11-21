@@ -4,17 +4,24 @@ The fake clock is at noon UTC on Wednesday, Oct 7, 2026.
 """
 
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-from app.core.errors import InvalidInputError, NotFoundError, PaymentIdConflictError
+from app.core.errors import (
+    InvalidInputError,
+    NotFoundError,
+    PaymentIdConflictError,
+    PaymentUndoTooLateError,
+)
 from app.models import Bill, Debt, Reserve, User
 from app.services.payments import (
     BillPaymentInput,
     DebtPaymentInput,
     PaymentService,
+    can_undo,
     closest_due_date,
 )
 from nextpay_engine import ReserveKind
@@ -330,6 +337,7 @@ def test_the_balance_and_the_reserve_both_go_down_but_not_below_zero(
 
     assert (loan.balance_cents, reserve.amount_cents) == (balance_left, reserve_left)
     assert payment.reserve_drawn_cents == reserved - reserve_left
+    assert payment.balance_reduced_cents == 900_000 - balance_left
 
 
 def test_the_last_payment_defaults_to_what_is_left(
@@ -483,3 +491,185 @@ def test_a_known_id_on_another_debt_is_a_conflict(
 
     with pytest.raises(PaymentIdConflictError):
         payment_service.pay_debt(ADA, card.id, DebtPaymentInput(id=payment_id))
+
+
+# --- undoing a payment (ADR 0017) ----------------------------------------------
+
+
+def committed_at(plans: Fake, when: datetime, user: User = ADA) -> None:
+    """A plan of ``user``'s committed at ``when``; only its commit time matters here."""
+    plans.add(SimpleNamespace(id=uuid.uuid4(), user_id=user.id, committed_at=when))
+
+
+def test_undoing_a_bill_payment_puts_back_what_it_drew_and_keeps_it(
+    payment_service: PaymentService,
+    bills: Fake,
+    bill_payments: Fake,
+    reserves: Fake,
+    user_lock: Fake,
+    transaction: Fake,
+    clock: Fake,
+) -> None:
+    rent = add_bill(bills)
+    reserve = set_aside(reserves, rent, 30_000)
+    payment = payment_service.pay_bill(ADA, rent.id, BillPaymentInput())[0]
+    assert (payment.reserve_drawn_cents, reserve.amount_cents) == (30_000, 0)
+    clock.advance(timedelta(minutes=5))
+
+    undone = payment_service.undo_bill_payment(ADA, rent.id, payment.id)
+
+    assert undone is payment
+    assert payment.undone_at == clock.now
+    assert reserve.amount_cents == 30_000
+    assert bill_payments.rows == {payment.id: payment}
+    assert payment_service.list_bill_payments(ADA.id, rent.id) == []
+    assert user_lock.locked == [ADA.id, ADA.id]
+    assert transaction.commits == 2
+
+
+def test_undoing_a_payment_with_nothing_drawn_leaves_the_reserves_alone(
+    payment_service: PaymentService, bills: Fake, reserves: Fake
+) -> None:
+    rent = add_bill(bills)
+    payment = payment_service.pay_bill(ADA, rent.id, BillPaymentInput())[0]
+
+    payment_service.undo_bill_payment(ADA, rent.id, payment.id)
+
+    assert reserves.rows == {}
+
+
+@pytest.mark.parametrize(
+    ("balance", "paid", "reduced"),
+    [
+        (900_000, 15_000, 15_000),
+        (10_000, 15_000, 10_000),  # paid past $0: only what was owed came off
+        (0, 5_000, 0),  # nothing was owed
+    ],
+)
+def test_undoing_a_debt_payment_puts_back_what_came_off_the_balance(
+    payment_service: PaymentService,
+    debts: Fake,
+    reserves: Fake,
+    balance: int,
+    paid: int,
+    reduced: int,
+) -> None:
+    loan = add_debt(debts, balance_cents=balance)
+    reserve = set_aside_for_debt(reserves, loan, 7_500)
+    payment = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput(amount_cents=paid))[0]
+    assert payment.balance_reduced_cents == reduced
+
+    payment_service.undo_debt_payment(ADA, loan.id, payment.id)
+
+    assert (loan.balance_cents, reserve.amount_cents) == (balance, 7_500)
+
+
+def test_undoing_twice_changes_nothing_the_second_time(
+    payment_service: PaymentService, debts: Fake, reserves: Fake, transaction: Fake, clock: Fake
+) -> None:
+    loan = add_debt(debts)
+    reserve = set_aside_for_debt(reserves, loan, 7_500)
+    payment = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput())[0]
+    payment_service.undo_debt_payment(ADA, loan.id, payment.id)
+    first_undone_at = payment.undone_at
+    clock.advance(timedelta(hours=1))
+
+    again = payment_service.undo_debt_payment(ADA, loan.id, payment.id)
+
+    assert again is payment
+    assert payment.undone_at == first_undone_at
+    assert (loan.balance_cents, reserve.amount_cents) == (900_000, 7_500)
+    assert transaction.commits == 2  # the pay and the first undo
+
+
+def test_a_payment_can_be_undone_until_a_plan_is_committed_after_it(
+    payment_service: PaymentService, debts: Fake, reserves: Fake, plans: Fake, clock: Fake
+) -> None:
+    loan = add_debt(debts)
+    committed_at(plans, clock.now)
+    # Recorded at the commit's own instant: after it, as for Safe to Spend (ADR 0016).
+    at_commit = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput())[0]
+    assert can_undo(at_commit, payment_service.latest_commit(ADA.id)) is True
+    clock.advance(timedelta(minutes=1))
+    before_next = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput())[0]
+    clock.advance(timedelta(minutes=1))
+    committed_at(plans, clock.now)
+    committed_at(plans, clock.now + timedelta(days=1), user=BOB)  # someone else's
+    clock.advance(timedelta(minutes=1))
+    after_next = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput())[0]
+
+    with pytest.raises(PaymentUndoTooLateError):
+        payment_service.undo_debt_payment(ADA, loan.id, before_next.id)
+
+    latest = payment_service.latest_commit(ADA.id)
+    assert [can_undo(p, latest) for p in (at_commit, before_next, after_next)] == [
+        False,
+        False,
+        True,
+    ]
+    payment_service.undo_debt_payment(ADA, loan.id, after_next.id)
+    assert can_undo(after_next, latest) is False  # undone
+
+
+def test_without_any_commit_every_payment_can_be_undone(
+    payment_service: PaymentService, bills: Fake
+) -> None:
+    rent = add_bill(bills)
+    payment = payment_service.pay_bill(ADA, rent.id, BillPaymentInput())[0]
+
+    assert can_undo(payment, payment_service.latest_commit(ADA.id)) is True
+
+
+def test_a_payment_is_undone_only_by_its_owner_through_its_own_target(
+    payment_service: PaymentService, bills: Fake, debts: Fake
+) -> None:
+    rent, phone = add_bill(bills), add_bill(bills, name="Phone")
+    loan = add_debt(debts)
+    rent_paid = payment_service.pay_bill(ADA, rent.id, BillPaymentInput())[0]
+    loan_paid = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput())[0]
+
+    for attempt in (
+        lambda: payment_service.undo_bill_payment(BOB, rent.id, rent_paid.id),
+        lambda: payment_service.undo_bill_payment(ADA, phone.id, rent_paid.id),
+        lambda: payment_service.undo_bill_payment(ADA, rent.id, uuid.uuid4()),
+        lambda: payment_service.undo_debt_payment(BOB, loan.id, loan_paid.id),
+        lambda: payment_service.undo_debt_payment(ADA, loan.id, rent_paid.id),
+    ):
+        with pytest.raises(NotFoundError):
+            attempt()
+    assert rent_paid.undone_at is None and loan_paid.undone_at is None
+
+
+def test_an_undone_payment_is_paid_again_with_a_new_id(
+    payment_service: PaymentService, debts: Fake, reserves: Fake
+) -> None:
+    loan = add_debt(debts)
+    reserve = set_aside_for_debt(reserves, loan, 7_500)
+    first_id = uuid.uuid4()
+    first = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput(id=first_id))[0]
+    payment_service.undo_debt_payment(ADA, loan.id, first.id)
+
+    retried, retry_created = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput(id=first_id))
+    again, created = payment_service.pay_debt(ADA, loan.id, DebtPaymentInput(id=uuid.uuid4()))
+
+    # The old id is a retry of the undone payment, and changes nothing...
+    assert (retried, retry_created) == (first, False)
+    # ...and a new id is a new payment, drawn down and taken off the balance again.
+    assert created is True and again.undone_at is None
+    assert (loan.balance_cents, reserve.amount_cents) == (885_000, 0)
+    assert payment_service.list_debt_payments(ADA.id, loan.id) == [again]
+
+
+def test_undoing_a_bill_payment_twice_puts_the_reserve_back_once(
+    payment_service: PaymentService, bills: Fake, reserves: Fake, transaction: Fake
+) -> None:
+    rent = add_bill(bills)
+    reserve = set_aside(reserves, rent, 30_000)
+    payment = payment_service.pay_bill(ADA, rent.id, BillPaymentInput())[0]
+
+    first = payment_service.undo_bill_payment(ADA, rent.id, payment.id)
+    again = payment_service.undo_bill_payment(ADA, rent.id, payment.id)
+
+    assert again is first
+    assert reserve.amount_cents == 30_000
+    assert transaction.commits == 2  # the pay and the first undo

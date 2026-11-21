@@ -2,7 +2,8 @@
 
 Unlike the resources, a payment is an event, and every field of the request is
 optional: left out (or null), each takes the obvious value, so "mark as paid"
-is a POST of ``{}``.
+is a POST of ``{}``. A payment is undone with a POST to its ``/undo``, which
+keeps it as history (ADR 0017).
 """
 
 import uuid
@@ -50,6 +51,19 @@ class BillPaymentResponse(BaseModel):
     paid_on: date
     amount_cents: int
     created_at: datetime
+    undone_at: datetime | None = Field(
+        description=(
+            "When the payment was undone; it then counts for nothing. Undone payments are "
+            "left out of payment lists, so this is set only on the reply to an undo, or to "
+            "a retry of the original payment."
+        )
+    )
+    can_undo: bool = Field(
+        description=(
+            "Whether POST .../undo would undo it: not once undone, and not once a plan was "
+            "committed after it (ADR 0017)."
+        )
+    )
 
 
 class BillPaymentListResponse(BaseModel):
@@ -83,6 +97,19 @@ class DebtPaymentResponse(BaseModel):
     paid_on: date
     amount_cents: int
     created_at: datetime
+    undone_at: datetime | None = Field(
+        description=(
+            "When the payment was undone; it then counts for nothing. Undone payments are "
+            "left out of payment lists, so this is set only on the reply to an undo, or to "
+            "a retry of the original payment."
+        )
+    )
+    can_undo: bool = Field(
+        description=(
+            "Whether POST .../undo would undo it: not once undone, and not once a plan was "
+            "committed after it (ADR 0017)."
+        )
+    )
 
 
 class DebtPaymentListResponse(BaseModel):

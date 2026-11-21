@@ -238,6 +238,23 @@ def test_the_database_allows_only_one_committed_plan_per_paycheck(
         plans.add(ada.plan(ada.first, 2, PlanStatus.COMMITTED))
 
 
+def test_the_latest_commit_is_the_users_newest_across_paychecks(
+    db_session: Session, ada: Setup, bob: Setup
+) -> None:
+    plans = PlanRepository(db_session)
+    assert plans.latest_commit(ada.user.id) is None
+    plans.add(ada.plan(ada.first, 1, PlanStatus.COMMITTED))
+    later = ada.plan(ada.second, 1, PlanStatus.COMMITTED)
+    later.committed_at = NOW + timedelta(days=14)
+    plans.add(later)
+    plans.add(ada.plan(ada.second, 2))  # drafts have no commit time
+    bobs = bob.plan(bob.first, 1, PlanStatus.COMMITTED)
+    bobs.committed_at = NOW + timedelta(days=30)
+    plans.add(bobs)
+
+    assert plans.latest_commit(ada.user.id) == NOW + timedelta(days=14)
+
+
 # --- payments ------------------------------------------------------------------
 
 
@@ -260,6 +277,8 @@ def test_a_bills_payments_are_listed_newest_first_for_its_owner_only(
 
     early, late, middle = paid(ada, 5), paid(ada, 25), paid(ada, 15)
     paid(bob, 30)
+    paid(ada, 28).undone_at = NOW  # undone: kept, but not listed
+    db_session.flush()
 
     assert payments.list_for_bill(ada.user.id, ada.rent.id) == [late, middle, early]
     assert payments.list_for_bill(ada.user.id, bob.rent.id) == []
@@ -280,11 +299,14 @@ def test_a_debts_payments_are_listed_newest_first_for_its_owner_only(
                 paid_on=date(2026, 10, day),
                 amount_cents=15_000,
                 reserve_drawn_cents=0,
+                balance_reduced_cents=15_000,
             )
         )
 
     early, late, middle = paid(ada, 5), paid(ada, 25), paid(ada, 15)
     paid(bob, 30)
+    paid(ada, 28).undone_at = NOW
+    db_session.flush()
 
     assert payments.list_for_debt(ada.user.id, ada.car.id) == [late, middle, early]
     assert payments.list_for_debt(ada.user.id, bob.car.id) == []
@@ -353,9 +375,35 @@ def test_what_payments_paid_beyond_their_reserves_is_summed_from_an_instant(
             paid_on=since.date(),
             amount_cents=15_000,
             reserve_drawn_cents=7_500,
+            balance_reduced_cents=15_000,
             created_at=since + timedelta(hours=1),
         )
     )
+    # Undone payments count for nothing.
+    for row in (
+        BillPayment(
+            user_id=ada.user.id,
+            bill_id=ada.rent.id,
+            due_date=date(2026, 10, 20),
+            paid_on=since.date(),
+            amount_cents=50_000,
+            reserve_drawn_cents=0,
+            created_at=since,
+            undone_at=since + timedelta(minutes=5),
+        ),
+        DebtPayment(
+            user_id=ada.user.id,
+            debt_id=ada.car.id,
+            paid_on=since.date(),
+            amount_cents=50_000,
+            reserve_drawn_cents=0,
+            balance_reduced_cents=50_000,
+            created_at=since,
+            undone_at=since + timedelta(minutes=5),
+        ),
+    ):
+        db_session.add(row)
+    db_session.flush()
 
     assert bills.unreserved_since(ada.user.id, since) == 6_000
     assert debts.unreserved_since(ada.user.id, since) == 7_500

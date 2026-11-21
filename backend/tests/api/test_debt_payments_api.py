@@ -95,7 +95,16 @@ def test_recording_the_minimum_takes_an_empty_body(
 
     assert response.status_code == 201, response.text
     payment = response.json()
-    assert set(payment) == {"id", "debt_id", "paid_on", "amount_cents", "created_at"}
+    assert set(payment) == {
+        "id",
+        "debt_id",
+        "paid_on",
+        "amount_cents",
+        "created_at",
+        "undone_at",
+        "can_undo",
+    }
+    assert (payment["undone_at"], payment["can_undo"]) == (None, True)
     assert (payment["debt_id"], payment["amount_cents"]) == (loan["id"], 15_000)
     assert payment["paid_on"] == "2026-10-07"
     assert balance(client, ada, loan) == 885_000

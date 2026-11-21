@@ -344,7 +344,11 @@ def add_debt(session: Session, user: User) -> Debt:
 
 
 def debt_payment(
-    user: User, debt: Debt, amount_cents: int = 15_000, reserve_drawn_cents: int = 0
+    user: User,
+    debt: Debt,
+    amount_cents: int = 15_000,
+    reserve_drawn_cents: int = 0,
+    balance_reduced_cents: int = 15_000,
 ) -> DebtPayment:
     return DebtPayment(
         user_id=user.id,
@@ -352,6 +356,7 @@ def debt_payment(
         paid_on=date(2026, 10, 19),
         amount_cents=amount_cents,
         reserve_drawn_cents=reserve_drawn_cents,
+        balance_reduced_cents=balance_reduced_cents,
     )
 
 
@@ -359,7 +364,7 @@ def test_a_debt_payment_must_be_positive(db_session: Session) -> None:
     user = add_user(db_session)
     debt = add_debt(db_session, user)
     with violates(db_session, "ck_debt_payments_amount_positive"):
-        db_session.add(debt_payment(user, debt, amount_cents=0))
+        db_session.add(debt_payment(user, debt, amount_cents=0, balance_reduced_cents=0))
 
 
 @pytest.mark.parametrize("drawn", [-1, 15_001])
@@ -370,6 +375,16 @@ def test_a_payment_draws_between_nothing_and_all_of_itself_from_its_reserve(
     debt = add_debt(db_session, user)
     with violates(db_session, "ck_debt_payments_reserve_drawn_range"):
         db_session.add(debt_payment(user, debt, reserve_drawn_cents=drawn))
+
+
+@pytest.mark.parametrize("reduced", [-1, 15_001])
+def test_a_payment_reduces_the_balance_by_between_nothing_and_all_of_itself(
+    db_session: Session, reduced: int
+) -> None:
+    user = add_user(db_session)
+    debt = add_debt(db_session, user)
+    with violates(db_session, "ck_debt_payments_balance_reduced_range"):
+        db_session.add(debt_payment(user, debt, balance_reduced_cents=reduced))
 
 
 def test_a_debt_payment_cannot_point_at_another_users_debt(db_session: Session) -> None:

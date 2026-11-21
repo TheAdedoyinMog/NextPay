@@ -184,6 +184,10 @@ class FakePlans(FakeOwnedStore):
             if plan.paycheck_id in wanted and plan.status is not PlanStatus.SUPERSEDED
         }
 
+    def latest_commit(self, user_id: uuid.UUID) -> datetime | None:
+        times = [plan.committed_at for plan in self.list_for(user_id) if plan.committed_at]
+        return max(times, default=None)
+
     def add_plan(self, plan: Any, allocations: Any, projections: Any) -> Any:
         self.lines[plan.id] = (list(allocations), list(projections))
         return self.add(plan)
@@ -212,14 +216,18 @@ class FakeBillPayments(FakeOwnedStore):
         return sum(
             row.amount_cents - row.reserve_drawn_cents
             for row in self.list_for(user_id)
-            if row.created_at >= since
+            if row.created_at >= since and row.undone_at is None
         )
 
     def find_any_owner(self, payment_id: uuid.UUID) -> Any:
         return self.rows.get(payment_id)
 
     def list_for_bill(self, user_id: uuid.UUID, bill_id: uuid.UUID) -> list[Any]:
-        own = [row for row in self.list_for(user_id) if row.bill_id == bill_id]
+        own = [
+            row
+            for row in self.list_for(user_id)
+            if row.bill_id == bill_id and row.undone_at is None
+        ]
         return sorted(own, key=lambda row: row.paid_on, reverse=True)
 
 
@@ -228,14 +236,18 @@ class FakeDebtPayments(FakeOwnedStore):
         return sum(
             row.amount_cents - row.reserve_drawn_cents
             for row in self.list_for(user_id)
-            if row.created_at >= since
+            if row.created_at >= since and row.undone_at is None
         )
 
     def find_any_owner(self, payment_id: uuid.UUID) -> Any:
         return self.rows.get(payment_id)
 
     def list_for_debt(self, user_id: uuid.UUID, debt_id: uuid.UUID) -> list[Any]:
-        own = [row for row in self.list_for(user_id) if row.debt_id == debt_id]
+        own = [
+            row
+            for row in self.list_for(user_id)
+            if row.debt_id == debt_id and row.undone_at is None
+        ]
         return sorted(own, key=lambda row: row.paid_on, reverse=True)
 
 
@@ -426,6 +438,7 @@ def payment_service(
     debts: FakeOwnedStore,
     debt_payments: FakeDebtPayments,
     reserves: FakeReserves,
+    plans: FakePlans,
     transaction: FakeTransaction,
     clock: FakeClock,
 ) -> PaymentService:
@@ -436,6 +449,7 @@ def payment_service(
         debts=debts,
         debt_payments=debt_payments,
         reserves=reserves,
+        plans=plans,
         transaction=transaction,
         clock=clock,
     )

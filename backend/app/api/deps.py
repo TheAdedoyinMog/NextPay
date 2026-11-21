@@ -201,6 +201,7 @@ def get_payment_service(session: SessionDep, clock: ClockDep) -> PaymentService:
         debts=DebtRepository(session),
         debt_payments=DebtPaymentRepository(session),
         reserves=ReserveRepository(session),
+        plans=PlanRepository(session),
         transaction=session,
         clock=clock,
     )

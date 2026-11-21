@@ -1,9 +1,9 @@
 """Essential expenses, debts, and the payments recorded against debts."""
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 
-from sqlalchemy import CheckConstraint, Index, String
+from sqlalchemy import CheckConstraint, DateTime, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -58,6 +58,10 @@ class DebtPayment(UserOwnedMixin, TimestampsMixin, Base):
             "reserve_drawn_cents >= 0 AND reserve_drawn_cents <= amount_cents",
             name="reserve_drawn_range",
         ),
+        CheckConstraint(
+            "balance_reduced_cents >= 0 AND balance_reduced_cents <= amount_cents",
+            name="balance_reduced_range",
+        ),
     )
 
     debt_id: Mapped[uuid.UUID]
@@ -66,3 +70,8 @@ class DebtPayment(UserOwnedMixin, TimestampsMixin, Base):
     # How much of the payment came out of its reserve; the rest came out of Safe to Spend.
     # Sorted after the timestamps because a migration added it to the table's end.
     reserve_drawn_cents: Mapped[Cents] = mapped_column(sort_order=3)
+    # How much the debt's balance went down: less than the amount when it overpaid past $0.
+    # Undoing the payment puts exactly this back (ADR 0017).
+    balance_reduced_cents: Mapped[Cents] = mapped_column(sort_order=4)
+    # When the payment was undone: it then counts for nothing, and is kept as history.
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), sort_order=5)
