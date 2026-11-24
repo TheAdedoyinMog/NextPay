@@ -12,11 +12,9 @@ Undoing a payment puts back exactly what it took, and keeps the row as history
 was made around the drawn-down reserve, so putting the reserve back then would
 hold the same money twice.
 
-Known limitation (ADR 0011): the planner does not know which occurrence of a
-bill is paid. A bill paid before the last paycheck ahead of its due date is
-reserved for again by that paycheck's plan; the extra then covers the next
-occurrence, so nothing is underfunded, but that plan's Safe to Spend is lower
-than it needs to be.
+Every payment names the occurrence it pays (its ``due_date``), and the payments
+that still count are plan inputs: the planner skips occurrences already paid and
+asks only for what is left of a partly paid one (ADR 0018).
 """
 
 import uuid
@@ -33,7 +31,7 @@ from app.core.errors import (
     PaymentUndoTooLateError,
 )
 from app.models import Bill, BillPayment, Debt, DebtPayment, User
-from app.services.engine_mapping import to_engine_bill
+from app.services.engine_mapping import to_engine_bill, to_engine_debt
 from app.services.protocols import Transaction, UserLock
 from app.services.reserves import ReserveStore, add_to_reserve, draw_down_reserve
 from nextpay_engine import ReserveKind
@@ -90,19 +88,17 @@ class DebtPaymentInput:
     amount_cents: int | None = None
     # None: today, in the user's time zone.
     paid_on: date | None = None
+    # Which occurrence this pays. None: the debt's due date closest to ``paid_on``.
+    due_date: date | None = None
 
 
 def closest_due_date(bill: Bill, day: date) -> date:
     """The due date of ``bill`` nearest to ``day``; the earlier one when two are as near.
 
     People pay a few days early or a few days late, so the nearest occurrence is
-    the one a payment is for.
+    the one a payment is for when none is named. The rule is the engine's.
     """
-    recurrence = to_engine_bill(bill).recurrence
-    before = recurrence.due_dates_between(date.min, day)
-    after = recurrence.next_due_after(day)
-    candidates = [*before[-1:], *([] if after is None else [after])]
-    return min(candidates, key=lambda due: (abs((due - day).days), due))
+    return to_engine_bill(bill).closest_due_date(day)
 
 
 def is_due_date(bill: Bill, day: date) -> bool:
@@ -215,7 +211,8 @@ class PaymentService:
 
         Raises ``NotFoundError``; ``PaymentIdConflictError`` for an id used by any
         other payment; ``InvalidInputError`` for an amount that is not positive
-        (including the default, when nothing is owed).
+        (including the default, when nothing is owed) or a ``due_date`` that is not
+        one of the debt's due dates.
         """
         self._users.lock(user.id)
         debt = self._debt(user.id, debt_id)
@@ -230,6 +227,16 @@ class PaymentService:
         else:
             amount_cents = data.amount_cents
         _require_amount(amount_cents)
+        paid_on = data.paid_on or local_date(self._clock(), user.timezone)
+        engine_debt = to_engine_debt(debt)
+        if data.due_date is None:
+            due_date = engine_debt.closest_due_date(paid_on)
+        elif engine_debt.is_due_date(data.due_date):
+            due_date = data.due_date
+        else:
+            raise InvalidInputError(
+                f"{data.due_date.isoformat()} is not a due date of {debt.name}."
+            )
 
         drawn = draw_down_reserve(self._reserves, user.id, ReserveKind.DEBT, debt.id, amount_cents)
         payment = self._debt_payments.add(
@@ -237,7 +244,8 @@ class PaymentService:
                 id=data.id or uuid.uuid4(),
                 user_id=user.id,
                 debt_id=debt.id,
-                paid_on=data.paid_on or local_date(self._clock(), user.timezone),
+                due_date=due_date,
+                paid_on=paid_on,
                 amount_cents=amount_cents,
                 reserve_drawn_cents=drawn,
                 balance_reduced_cents=min(amount_cents, debt.balance_cents),

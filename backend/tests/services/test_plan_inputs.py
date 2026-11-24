@@ -11,7 +11,9 @@ import nextpay_engine as engine
 from app.models import (
     BalanceSnapshot,
     Bill,
+    BillPayment,
     Debt,
+    DebtPayment,
     EssentialExpense,
     Goal,
     IncomeSource,
@@ -133,6 +135,41 @@ def rows() -> dict[str, Any]:
                 id=uid(62), user_id=USER, kind=ReserveKind.DEBT, debt_id=uid(40), amount_cents=0
             ),
         ],
+        # Payments that still count (ADR 0018). The paycheck is Oct 2: the Oct 20 ones can
+        # change its plan, the Sep 20 one can't.
+        "bill_payments": [
+            BillPayment(
+                id=uid(80),
+                user_id=USER,
+                bill_id=uid(20),
+                due_date=date(2026, 10, 20),
+                paid_on=date(2026, 10, 1),
+                amount_cents=30_000,
+                reserve_drawn_cents=0,
+            ),
+        ],
+        "debt_payments": [
+            DebtPayment(
+                id=uid(81),
+                user_id=USER,
+                debt_id=uid(40),
+                due_date=date(2026, 10, 20),
+                paid_on=date(2026, 10, 1),
+                amount_cents=15_000,
+                reserve_drawn_cents=0,
+                balance_reduced_cents=15_000,
+            ),
+            DebtPayment(
+                id=uid(82),
+                user_id=USER,
+                debt_id=uid(40),
+                due_date=date(2026, 9, 20),
+                paid_on=date(2026, 9, 18),
+                amount_cents=15_000,
+                reserve_drawn_cents=0,
+                balance_reduced_cents=15_000,
+            ),
+        ],
     }
 
 
@@ -173,6 +210,16 @@ def test_the_state_carries_every_row() -> None:
     # The $0 debt reserve is left out.
     assert state.total_reserved() == Money(15_000)
     assert len(state.reserves) == 2
+    assert state.payments_for(engine.PaymentKind.BILL, str(uid(20))) == (
+        engine.Payment(
+            engine.PaymentKind.BILL,
+            str(uid(20)),
+            date(2026, 10, 20),
+            date(2026, 10, 1),
+            Money(30_000),
+        ),
+    )
+    assert len(state.payments_for(engine.PaymentKind.DEBT, str(uid(40)))) == 2
 
 
 def test_no_balance_snapshot_means_zero_and_no_rows_means_an_empty_state() -> None:
@@ -235,13 +282,13 @@ def test_the_canonical_form_is_pinned() -> None:
     # Changing this value means every stored draft becomes out of date. If that
     # is intended, say so in the ADR and update the value. (A new ENGINE_VERSION
     # changes it too, which is the point: a new engine may plan differently.)
-    assert engine.ENGINE_VERSION == "0.2.0"
-    assert hash_of(rows()) == "310a316a1091559d348c4caa762a62a2689f984377db254ae5c6678a62fa523e"
+    assert engine.ENGINE_VERSION == "0.3.0"
+    assert hash_of(rows()) == "f392245c28e25dface3b7230eda4db56a44451acce0c262bbf628dbadb331675"
 
 
 def test_the_order_rows_were_loaded_in_does_not_matter() -> None:
     shuffled = rows()
-    for name in ("income_sources", "bills", "goals", "reserves"):
+    for name in ("income_sources", "bills", "goals", "reserves", "debt_payments"):
         shuffled[name].reverse()
     assert hash_of(shuffled) == hash_of(rows())
 
@@ -306,7 +353,8 @@ def remove(collection: str, index: int) -> Callable[[dict[str, Any]], None]:
         change("debts", 0, apr_bps=700),
         change("debts", 0, minimum_payment_cents=16_000),
         change("debts", 0, due_day=21),
-        remove("debts", 0),
+        # Deleting a debt deletes its payments too (ON DELETE CASCADE).
+        lambda data: data.update(debts=[], debt_payments=[]),
         change("goals", 0, name="Lens"),
         change("goals", 0, kind=GoalKind.SAVINGS),
         change("goals", 0, target_cents=250_000),
@@ -318,6 +366,16 @@ def remove(collection: str, index: int) -> Callable[[dict[str, Any]], None]:
         change("reserves", 0, amount_cents=5_001),
         change("reserves", 2, amount_cents=1),
         remove("reserves", 1),
+        change("bill_payments", 0, amount_cents=30_001),
+        change("bill_payments", 0, due_date=date(2026, 11, 20)),
+        change("bill_payments", 0, paid_on=date(2026, 9, 30)),
+        remove("bill_payments", 0),
+        change("debt_payments", 0, amount_cents=15_001),
+        change("debt_payments", 0, due_date=date(2026, 11, 20)),
+        change("debt_payments", 0, paid_on=date(2026, 9, 30)),
+        remove("debt_payments", 0),
+        # A payment for an occurrence before the payday that is moved after it.
+        change("debt_payments", 1, due_date=date(2026, 10, 3)),
     ],
 )
 def test_any_change_the_planner_could_see_changes_the_hash(
@@ -326,6 +384,63 @@ def test_any_change_the_planner_could_see_changes_the_hash(
     data = rows()
     mutate(data)
     assert hash_of(data) != hash_of(rows())
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        change("debt_payments", 1, amount_cents=99_999),
+        change("debt_payments", 1, paid_on=date(2026, 9, 1)),
+        # Due on the payday itself: the planner looks only after it.
+        change("debt_payments", 1, due_date=date(2026, 10, 2)),
+        remove("debt_payments", 1),
+        change("debt_payments", 0, id=uid(999)),
+    ],
+)
+def test_what_the_planner_cannot_see_of_a_payment_leaves_the_hash_alone(
+    mutate: Callable[[dict[str, Any]], None],
+) -> None:
+    # Payments due on or before the payday, and payment ids (ADR 0018).
+    data = rows()
+    mutate(data)
+    assert hash_of(data) == hash_of(rows())
+
+
+def test_two_equal_payments_count_twice() -> None:
+    data = rows()
+    twin = data["bill_payments"][0]
+    data["bill_payments"].append(
+        BillPayment(
+            id=uid(83),
+            user_id=USER,
+            bill_id=twin.bill_id,
+            due_date=twin.due_date,
+            paid_on=twin.paid_on,
+            amount_cents=twin.amount_cents,
+            reserve_drawn_cents=0,
+        )
+    )
+    assert hash_of(data) != hash_of(rows())
+
+
+def test_the_canonical_form_lists_the_payments_after_the_payday() -> None:
+    document = canonical_input(to_engine_state(**rows()), to_engine_paycheck(paycheck_row()), AS_OF)
+    assert document["state"]["payments"] == [
+        {
+            "kind": "bill",
+            "target_id": str(uid(20)),
+            "due": "2026-10-20",
+            "paid_on": "2026-10-01",
+            "amount_cents": 30_000,
+        },
+        {
+            "kind": "debt",
+            "target_id": str(uid(40)),
+            "due": "2026-10-20",
+            "paid_on": "2026-10-01",
+            "amount_cents": 15_000,
+        },
+    ]
 
 
 def test_the_paycheck_the_date_and_the_engine_version_are_part_of_the_hash(

@@ -14,7 +14,9 @@ import nextpay_engine as engine
 from app.models import (
     BalanceSnapshot,
     Bill,
+    BillPayment,
     Debt,
+    DebtPayment,
     EssentialExpense,
     Goal,
     IncomeSource,
@@ -28,6 +30,10 @@ class Listing[M](Protocol):
     """A store that can list one user's rows. For income sources: the active ones."""
 
     def list_for(self, user_id: uuid.UUID) -> Sequence[M]: ...
+
+
+class CountingPayments[M](Protocol):
+    def counting_for(self, user_id: uuid.UUID) -> Sequence[M]: ...
 
 
 class LatestBalances(Protocol):
@@ -52,6 +58,8 @@ class PlanningStateLoader:
         goals: Listing[Goal],
         reserves: Listing[Reserve],
         balances: LatestBalances,
+        bill_payments: CountingPayments[BillPayment],
+        debt_payments: CountingPayments[DebtPayment],
     ) -> None:
         self._income_sources = income_sources
         self._bills = bills
@@ -60,6 +68,8 @@ class PlanningStateLoader:
         self._goals = goals
         self._reserves = reserves
         self._balances = balances
+        self._bill_payments = bill_payments
+        self._debt_payments = debt_payments
 
     def load(self, user: User) -> PlanningInputs:
         """``user``'s financial state as it stands now."""
@@ -74,5 +84,7 @@ class PlanningStateLoader:
             debts=self._debts.list_for(user.id),
             goals=self._goals.list_for(user.id),
             reserves=self._reserves.list_for(user.id),
+            bill_payments=self._bill_payments.counting_for(user.id),
+            debt_payments=self._debt_payments.counting_for(user.id),
         )
         return PlanningInputs(state, balance)

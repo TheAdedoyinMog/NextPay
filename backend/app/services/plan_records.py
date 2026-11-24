@@ -137,6 +137,11 @@ def _allocation_row(
         days_covered=basis.days_covered,
         days_in_period=basis.days_in_period,
         share_bps=basis.share_bps,
+        paid_cents=basis.paid.cents,
+        paid_on=basis.paid_on,
+        paid_ahead=basis.paid_ahead,
+        paid_through=basis.paid_through,
+        paid_ahead_on=basis.paid_ahead_on,
     )
     setattr(row, _TARGET_COLUMN[allocation.tier], uuid.UUID(allocation.target_id))
     return row
@@ -185,6 +190,11 @@ def _engine_allocation(row: Allocation) -> engine.Allocation:
             days_covered=row.days_covered,
             days_in_period=row.days_in_period,
             share_bps=row.share_bps,
+            paid=engine.Money(row.paid_cents),
+            paid_on=row.paid_on,
+            paid_ahead=row.paid_ahead,
+            paid_through=row.paid_through,
+            paid_ahead_on=row.paid_ahead_on,
         ),
     )
 

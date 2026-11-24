@@ -89,11 +89,22 @@ class DebtPaymentRequest(RequestModel):
     paid_on: Annotated[IsoDate | None, Field(description="Left out: today, in your time zone.")] = (
         None
     )
+    due_date: Annotated[
+        IsoDate | None,
+        Field(
+            description=(
+                "Which minimum payment this pays; it must be one of the debt's due dates. "
+                "Left out: the due date closest to paid_on. Paying more than the minimum "
+                "lowers the balance but pays no later minimum (ADR 0018)."
+            )
+        ),
+    ] = None
 
 
 class DebtPaymentResponse(BaseModel):
     id: uuid.UUID
     debt_id: uuid.UUID
+    due_date: date
     paid_on: date
     amount_cents: int
     created_at: datetime

@@ -49,6 +49,15 @@ class AllocationResponse(BaseModel):
     days_covered: int | None
     days_in_period: int | None
     share_bps: int | None
+    paid_cents: int = Field(description="Already paid toward due_date (ADR 0018).")
+    paid_on: date | None = Field(description="When the latest of those payments was made.")
+    paid_ahead: int = Field(
+        description="How many earlier occurrences were skipped because they are fully paid."
+    )
+    paid_through: date | None = Field(description="The due date of the last one skipped.")
+    paid_ahead_on: date | None = Field(
+        description="When the latest payment toward the skipped occurrences was made."
+    )
     explanation: str
 
 

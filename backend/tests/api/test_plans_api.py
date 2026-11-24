@@ -126,6 +126,11 @@ def test_a_plan_has_exactly_these_fields(
         "days_covered": None,
         "days_in_period": None,
         "share_bps": None,
+        "paid_cents": 0,
+        "paid_on": None,
+        "paid_ahead": 0,
+        "paid_through": None,
+        "paid_ahead_on": None,
         "explanation": (
             "We reserved $400 toward Rent because the $800 bill is due Oct 20 and is split "
             "across the 2 paychecks before then."

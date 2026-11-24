@@ -101,6 +101,8 @@ class Allocation(UserOwnedMixin, CreatedAtMixin, Base):
         CheckConstraint("days_covered >= 0", name="days_covered_not_negative"),
         CheckConstraint("days_in_period >= 1", name="days_in_period_positive"),
         CheckConstraint("share_bps BETWEEN 0 AND 10000", name="share_bps_range"),
+        CheckConstraint("paid_cents >= 0", name="paid_not_negative"),
+        CheckConstraint("paid_ahead >= 0", name="paid_ahead_not_negative"),
         # Only the tier's own target may be set; it is NULL once the target is deleted.
         CheckConstraint(
             "(tier = 'bill'"
@@ -135,6 +137,13 @@ class Allocation(UserOwnedMixin, CreatedAtMixin, Base):
     days_covered: Mapped[int | None]
     days_in_period: Mapped[int | None]
     share_bps: Mapped[int | None]
+    # What is already paid around the line's due date (ADR 0018). Sorted after the
+    # timestamp because a migration added them to the table's end.
+    paid_cents: Mapped[Cents] = mapped_column(default=0, sort_order=2)
+    paid_on: Mapped[date | None] = mapped_column(sort_order=3)
+    paid_ahead: Mapped[int] = mapped_column(default=0, sort_order=4)
+    paid_through: Mapped[date | None] = mapped_column(sort_order=5)
+    paid_ahead_on: Mapped[date | None] = mapped_column(sort_order=6)
 
 
 class GoalProjection(UserOwnedMixin, CreatedAtMixin, Base):

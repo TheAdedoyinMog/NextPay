@@ -42,6 +42,22 @@ uv run alembic -c backend/alembic.ini check                # fails if models and
 docker compose -f infra/docker-compose.yml down            # stop (add -v to delete the data)
 ```
 
+#### Backing up and restoring
+
+Back up before migrating, and before anything you'd hate to lose. Each backup is a
+timestamped file in `backups/` (git-ignored, so copy it somewhere safe if it matters).
+Nothing needs installing: the dump runs inside the database container.
+
+```bash
+uv run python infra/db.py backup                      # writes backups/nextpay-<date>-<time>.dump
+uv run python infra/db.py restore backups/nextpay-20261122-131648.dump
+```
+
+Restore replaces **everything** in the database with the backup. Stop the API first. It asks
+you to type `restore`, and it backs up the current data before it starts
+(`...-before-restore.dump`), so a restore can itself be undone. A backup holds the schema at
+its migration; after restoring an older one, run `alembic ... upgrade head` again.
+
 The API also needs `NEXTPAY_JWT_SECRET` (any 32+ characters locally; `.env.example` has
 one). Migrations don't: they read only the database settings. Auth design: ADR 0009.
 
@@ -72,11 +88,12 @@ a nullable one must be sent as `null`. Conventions and delete rules: ADR 0010. A
 A payday goes like this: enter your balance (`POST /balance-snapshots`), find the paycheck
 (`GET /paychecks`), plan it (`POST /plans`), and commit the plan. Committing sets aside
 what the plan put toward bills, debts and goals; paying a bill or debt draws that down.
-How plans, commits and payments work, and one known limitation: ADR 0011. A plan says
+How plans, commits and payments work: ADR 0011. A plan says
 `is_out_of_date` when commit would refuse it; how every money action is safe to repeat: ADR 0015.
 The dashboard's Safe to Spend falls when a payment goes beyond what was set aside: ADR 0016.
 A payment can be undone until the next plan is committed, which puts back exactly what it
-took: ADR 0017.
+took: ADR 0017. Each payment names the occurrence it pays (`due_date`), and plans don't reserve
+again for what is already paid; a partial payment lowers what is still needed: ADR 0018.
 
 ### The mobile app
 

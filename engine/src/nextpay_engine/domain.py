@@ -38,6 +38,11 @@ class ReserveKind(StrEnum):
     DEBT = "debt"
 
 
+class PaymentKind(StrEnum):
+    BILL = "bill"
+    DEBT = "debt"
+
+
 @dataclass(frozen=True, slots=True)
 class IncomeSource:
     """A job or other regular income, paid on ``schedule`` (ADR 0005)."""
@@ -105,6 +110,14 @@ class Bill:
     def next_due_after(self, day: date) -> date | None:
         return self.recurrence.next_due_after(day)
 
+    def closest_due_date(self, day: date) -> date:
+        """The due date nearest ``day``; the earlier one when two are as near (ADR 0018).
+
+        The occurrence a payment made on ``day`` pays when none is named.
+        """
+        before = self.recurrence.due_dates_between(date.min, day)
+        return _closest(day, before[-1] if before else None, self.next_due_after(day))
+
 
 @dataclass(frozen=True, slots=True)
 class EssentialExpense:
@@ -161,6 +174,19 @@ class Debt:
         year, month = add_months(day.year, day.month, 1)
         return clamped_date(year, month, self.due_day)
 
+    def is_due_date(self, day: date) -> bool:
+        require_date(day, "day")
+        return clamped_date(day.year, day.month, self.due_day) == day
+
+    def closest_due_date(self, day: date) -> date:
+        """The due date nearest ``day``; the earlier one when two are as near (ADR 0018)."""
+        require_date(day, "day")
+        due = clamped_date(day.year, day.month, self.due_day)
+        if due > day:
+            year, month = add_months(day.year, day.month, -1)
+            return _closest(day, clamped_date(year, month, self.due_day), due)
+        return _closest(day, due, self.next_due_after(day))
+
 
 @dataclass(frozen=True, slots=True)
 class Goal:
@@ -201,6 +227,30 @@ class Reserve:
         _require_money(self.amount, "amount", non_negative=True)
 
 
+@dataclass(frozen=True, slots=True)
+class Payment:
+    """Money paid toward one occurrence of a bill or debt: the one due on ``due`` (ADR 0018).
+
+    Only payments that still count reach the engine: an undone payment is left out.
+    A payment whose ``due`` is not one of its target's due dates (the schedule was
+    edited after it was made) matches no occurrence and changes nothing.
+    """
+
+    kind: PaymentKind
+    target_id: str
+    due: date
+    paid_on: date
+    amount: Money
+
+    def __post_init__(self) -> None:
+        if type(self.kind) is not PaymentKind:
+            raise TypeError(f"kind must be a PaymentKind, got {self.kind!r}")
+        _require_text(self.target_id, "target_id")
+        require_date(self.due, "due")
+        require_date(self.paid_on, "paid_on")
+        _require_money(self.amount, "amount", positive=True)
+
+
 def paycheck_timeline(
     sources: Iterable[IncomeSource], start: date, end: date
 ) -> tuple[Paycheck, ...]:
@@ -218,6 +268,13 @@ def paycheck_timeline(
         paycheck for source in sources for paycheck in source.paychecks_between(start, end)
     )
     return tuple(sorted(paychecks, key=lambda paycheck: (paycheck.pay_date, paycheck.source_id)))
+
+
+def _closest(day: date, before: date | None, after: date | None) -> date:
+    candidates = [due for due in (before, after) if due is not None]
+    if not candidates:
+        raise ValueError("there is no due date to choose from")
+    return min(candidates, key=lambda due: (abs((due - day).days), due))
 
 
 def _require_text(value: str, name: str) -> None:

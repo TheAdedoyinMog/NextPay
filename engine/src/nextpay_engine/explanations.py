@@ -44,12 +44,17 @@ def explain_allocation(allocation: Allocation, plan: PlanResult) -> str:
         verb, preposition = _VERBS[allocation.tier]
         lead = f"We {verb} {_money(allocation.requested)} {preposition} {basis.name}"
     sentence = f"{lead} {_why(basis, plan)}."
-    if not allocation.is_underfunded:
-        return sentence
-    covered = "Nothing" if allocation.funded.is_zero() else f"Only {_money(allocation.funded)}"
-    if allocation.tier in _SAVINGS_TIERS:
-        return f"{sentence} {covered} could go toward it this time, so it will take longer."
-    return f"{sentence} {covered} could be covered, so you're {_money(allocation.shortfall)} short."
+    if allocation.is_underfunded:
+        covered = "Nothing" if allocation.funded.is_zero() else f"Only {_money(allocation.funded)}"
+        if allocation.tier in _SAVINGS_TIERS:
+            sentence += f" {covered} could go toward it this time, so it will take longer."
+        else:
+            sentence += (
+                f" {covered} could be covered, so you're {_money(allocation.shortfall)} short."
+            )
+    if basis.paid_ahead:
+        sentence += f" {_paid_ahead(allocation.tier, basis, plan)}"
+    return sentence
 
 
 def explain_projection(projection: GoalProjection, plan: PlanResult) -> str:
@@ -157,12 +162,33 @@ def _due(subject: str, basis: Basis, plan: PlanResult) -> str:
     """ "because <subject> is due <date> and is split across the 2 paychecks before then"."""
     assert basis.due is not None and basis.paychecks is not None
     due = f"because {subject} is due {_date(basis.due, plan)}"
-    if basis.set_aside:
+    if basis.paid or basis.set_aside:
         rest = "due before your next paycheck" if basis.paychecks == 1 else _spread(basis.paychecks)
-        return f"{due}; with {_money(basis.set_aside)} already set aside, the rest is {rest}"
+        return f"{due}; with {_already(basis, plan)}, the rest is {rest}"
     if basis.paychecks == 1:
         return f"{due}, before your next paycheck"
     return f"{due} and is {_spread(basis.paychecks)}"
+
+
+def _already(basis: Basis, plan: PlanResult) -> str:
+    """ "$40 already paid on Nov 21 and $5 set aside", or either part alone (ADR 0018)."""
+    set_aside = _money(basis.set_aside)
+    if not basis.paid:
+        return f"{set_aside} already set aside"
+    assert basis.paid_on is not None
+    paid = f"{_money(basis.paid)} already paid on {_date(basis.paid_on, plan)}"
+    return f"{paid} and {set_aside} set aside" if basis.set_aside else paid
+
+
+def _paid_ahead(tier: Tier, basis: Basis, plan: PlanResult) -> str:
+    """What was skipped because it is already paid: "The Nov 25 bill was already paid on
+    Nov 22." (ADR 0018)."""
+    assert basis.paid_through is not None and basis.paid_ahead_on is not None
+    through, on = _date(basis.paid_through, plan), _date(basis.paid_ahead_on, plan)
+    if basis.paid_ahead > 1:
+        return f"Everything due through {through} was already paid, most recently on {on}."
+    what = "bill" if tier is Tier.BILL else "minimum payment"
+    return f"The {through} {what} was already paid on {on}."
 
 
 def _spread(paychecks: int) -> str:

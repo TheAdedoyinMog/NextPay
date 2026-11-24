@@ -630,6 +630,31 @@ export interface components {
             days_in_period: number | null;
             /** Share Bps */
             share_bps: number | null;
+            /**
+             * Paid Cents
+             * @description Already paid toward due_date (ADR 0018).
+             */
+            paid_cents: number;
+            /**
+             * Paid On
+             * @description When the latest of those payments was made.
+             */
+            paid_on: string | null;
+            /**
+             * Paid Ahead
+             * @description How many earlier occurrences were skipped because they are fully paid.
+             */
+            paid_ahead: number;
+            /**
+             * Paid Through
+             * @description The due date of the last one skipped.
+             */
+            paid_through: string | null;
+            /**
+             * Paid Ahead On
+             * @description When the latest payment toward the skipped occurrences was made.
+             */
+            paid_ahead_on: string | null;
             /** Explanation */
             explanation: string;
         };
@@ -864,6 +889,11 @@ export interface components {
              * @description Left out: today, in your time zone.
              */
             paid_on?: string | null;
+            /**
+             * Due Date
+             * @description Which minimum payment this pays; it must be one of the debt's due dates. Left out: the due date closest to paid_on. Paying more than the minimum lowers the balance but pays no later minimum (ADR 0018).
+             */
+            due_date?: string | null;
         };
         /** DebtPaymentResponse */
         DebtPaymentResponse: {
@@ -877,6 +907,11 @@ export interface components {
              * Format: uuid
              */
             debt_id: string;
+            /**
+             * Due Date
+             * Format: date
+             */
+            due_date: string;
             /**
              * Paid On
              * Format: date

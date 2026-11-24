@@ -12,6 +12,8 @@ from nextpay_engine.domain import (
     GoalKind,
     IncomeSource,
     Paycheck,
+    Payment,
+    PaymentKind,
     Reserve,
     ReserveKind,
     paycheck_timeline,
@@ -32,7 +34,7 @@ from nextpay_engine.planning import (
 from nextpay_engine.recurrence import BillRecurrence, EveryNMonths, OneTime
 from nextpay_engine.state import FinancialState
 
-ENGINE_VERSION = "0.2.0"
+ENGINE_VERSION = "0.3.0"
 
 __all__ = [
     "ENGINE_VERSION",
@@ -55,6 +57,8 @@ __all__ = [
     "OneTime",
     "PaySchedule",
     "Paycheck",
+    "Payment",
+    "PaymentKind",
     "PlanResult",
     "Reason",
     "Reserve",

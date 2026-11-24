@@ -12,3 +12,6 @@ htmlcov/
 node_modules/
 .expo/
 .DS_Store
+
+# Local database backups (infra/db.py)
+backups/

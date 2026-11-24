@@ -118,6 +118,26 @@ def to_engine_reserve(row: models.Reserve) -> engine.Reserve:
     return engine.Reserve(row.kind, str(target_id), engine.Money(row.amount_cents))
 
 
+def to_engine_bill_payment(row: models.BillPayment) -> engine.Payment:
+    return engine.Payment(
+        kind=engine.PaymentKind.BILL,
+        target_id=str(row.bill_id),
+        due=row.due_date,
+        paid_on=row.paid_on,
+        amount=engine.Money(row.amount_cents),
+    )
+
+
+def to_engine_debt_payment(row: models.DebtPayment) -> engine.Payment:
+    return engine.Payment(
+        kind=engine.PaymentKind.DEBT,
+        target_id=str(row.debt_id),
+        due=row.due_date,
+        paid_on=row.paid_on,
+        amount=engine.Money(row.amount_cents),
+    )
+
+
 def to_engine_paycheck(row: models.Paycheck) -> engine.Paycheck:
     actual = row.actual_amount_cents
     return engine.Paycheck(
@@ -138,12 +158,15 @@ def to_engine_state(
     debts: Iterable[models.Debt],
     goals: Iterable[models.Goal],
     reserves: Iterable[models.Reserve],
+    bill_payments: Iterable[models.BillPayment] = (),
+    debt_payments: Iterable[models.DebtPayment] = (),
 ) -> engine.FinancialState:
     """Everything the planner knows about a user, from their rows.
 
     ``balance`` is their latest snapshot; with none, they start from $0.
     ``income_sources`` must be the active ones: an archived source pays nothing.
     A reserve of $0 is left out, since the planner treats it as no reserve.
+    The payments must be the ones that still count: undone ones are left out (ADR 0018).
     """
     return engine.FinancialState(
         available_balance=engine.Money.zero() if balance is None else to_engine_balance(balance),
@@ -154,4 +177,8 @@ def to_engine_state(
         goals=tuple(to_engine_goal(row) for row in goals),
         reserves=tuple(to_engine_reserve(row) for row in reserves if row.amount_cents != 0),
         no_deadline_goal_share_bps=user.no_deadline_goal_share_bps,
+        payments=(
+            *(to_engine_bill_payment(row) for row in bill_payments),
+            *(to_engine_debt_payment(row) for row in debt_payments),
+        ),
     )

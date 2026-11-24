@@ -11,6 +11,8 @@ from nextpay_engine.domain import (
     Goal,
     GoalKind,
     IncomeSource,
+    Payment,
+    PaymentKind,
     Reserve,
     ReserveKind,
 )
@@ -29,6 +31,11 @@ class FinancialState:
     ``no_deadline_goal_share_bps`` is the share of what is left after every other
     allocation that goes to goals with no deadline (or a passed one), in basis
     points: the default 2000 is 20%.
+
+    ``payments`` are the bill and debt payments that still count (undone ones are
+    left out), each for the occurrence it names. They are already reflected in the
+    reserves they drew down and the debt balances they lowered; the planner uses
+    them only to know which occurrences are paid (ADR 0018).
     """
 
     available_balance: Money
@@ -39,13 +46,22 @@ class FinancialState:
     goals: tuple[Goal, ...] = ()
     reserves: tuple[Reserve, ...] = ()
     no_deadline_goal_share_bps: int = 2000
+    payments: tuple[Payment, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.available_balance, Money):
             raise TypeError(
                 f"available_balance must be Money, got {type(self.available_balance).__name__}"
             )
-        for name in ("income_sources", "bills", "essentials", "debts", "goals", "reserves"):
+        for name in (
+            "income_sources",
+            "bills",
+            "essentials",
+            "debts",
+            "goals",
+            "reserves",
+            "payments",
+        ):
             if type(getattr(self, name)) is not tuple:
                 raise TypeError(f"{name} must be a tuple")
         share = self.no_deadline_goal_share_bps
@@ -68,6 +84,15 @@ class FinancialState:
                 raise ValueError(
                     f"reserve points at unknown {reserve.kind.value} {reserve.target_id!r}"
                 )
+        payment_targets = {
+            PaymentKind.BILL: targets[ReserveKind.BILL],
+            PaymentKind.DEBT: targets[ReserveKind.DEBT],
+        }
+        for payment in self.payments:
+            if payment.target_id not in payment_targets[payment.kind]:
+                raise ValueError(
+                    f"payment points at unknown {payment.kind.value} {payment.target_id!r}"
+                )
 
     @property
     def emergency_goal(self) -> Goal | None:
@@ -86,6 +111,10 @@ class FinancialState:
             (r.amount for r in self.reserves if r.kind is kind and r.target_id == target_id),
             Money.zero(),
         )
+
+    def payments_for(self, kind: PaymentKind, target_id: str) -> tuple[Payment, ...]:
+        """The payments toward one bill or debt, any occurrence."""
+        return tuple(p for p in self.payments if p.kind is kind and p.target_id == target_id)
 
     def total_reserved(self) -> Money:
         return sum((reserve.amount for reserve in self.reserves), Money.zero())

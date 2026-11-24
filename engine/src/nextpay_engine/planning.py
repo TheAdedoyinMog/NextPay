@@ -6,9 +6,10 @@ targets need from this paycheck, and the money is handed out request by request
 until it runs out. Whatever is left is Safe to Spend, never below $0.
 
 Tiers (each a function from the plan context to its ordered requests):
-  1. Bills: each bill's next due date, split across the paychecks before it.
+  1. Bills: each bill's next due date that is not fully paid, less what is
+     already paid toward it, split across the paychecks before it (ADR 0018).
   2. Essentials: prorated by the days until the next paycheck.
-  3. Debt minimums: split across the paychecks before the due date, like bills.
+  3. Debt minimums: the next one not fully paid, split like a bill.
   4. Emergency fund: what the emergency goal still needs.
   5. Goals: those with a deadline by priority, then deadline, each split across
      the paychecks before it (rounded up); then a share of what is left for
@@ -20,14 +21,23 @@ projected completion date at the rate this paycheck funded it.
 """
 
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from enum import StrEnum
 from functools import cached_property
 from itertools import groupby
 
 from nextpay_engine.dates import require_date
-from nextpay_engine.domain import Goal, GoalKind, Paycheck, ReserveKind, paycheck_timeline
+from nextpay_engine.domain import (
+    Debt,
+    Goal,
+    GoalKind,
+    Paycheck,
+    Payment,
+    PaymentKind,
+    ReserveKind,
+    paycheck_timeline,
+)
 from nextpay_engine.money import Money
 from nextpay_engine.state import FinancialState
 
@@ -79,6 +89,11 @@ class Basis:
     - ``paychecks``: the paychecks the need is split across, this one included.
     - ``days_covered`` and ``days_in_period``: for essentials.
     - ``share_bps``: for goals sharing the leftover money.
+    - ``paid`` and ``paid_on``: for a bill or debt, what is already paid toward
+      ``due``, and the date of the latest of those payments (ADR 0018).
+    - ``paid_ahead``, ``paid_through`` and ``paid_ahead_on``: how many earlier
+      occurrences were skipped because they are fully paid, the last one's due
+      date, and the date of the latest payment toward them.
     """
 
     reason: Reason
@@ -90,6 +105,11 @@ class Basis:
     days_covered: int | None = None
     days_in_period: int | None = None
     share_bps: int | None = None
+    paid: Money = field(default_factory=Money.zero)
+    paid_on: date | None = None
+    paid_ahead: int = 0
+    paid_through: date | None = None
+    paid_ahead_on: date | None = None
 
 
 class GoalStatus(StrEnum):
@@ -322,20 +342,29 @@ def _timeline_position(paycheck: Paycheck) -> tuple[date, str]:
 
 
 def _bill_requests(ctx: _Context) -> tuple[_Request, ...]:
-    """Each bill's share of its next due date, most important bill first."""
+    """Each bill's share of its next unpaid occurrence, most important bill first.
+
+    Bills have no principal: paying more than a bill covers that occurrence only.
+    """
     keyed: list[tuple[tuple[int, date, str], _Request]] = []
     for bill in ctx.state.bills:
-        due = bill.next_due_after(ctx.paycheck.pay_date)
-        if due is None:
+
+        def unpaid(paid: Money, amount: Money = bill.amount) -> Money:
+            return max(amount - paid, Money.zero())
+
+        occurrence = _next_unpaid(
+            ctx, ctx.state.payments_for(PaymentKind.BILL, bill.id), bill.next_due_after, unpaid
+        )
+        if occurrence is None:
             continue
         reserved = ctx.state.reserved_for(ReserveKind.BILL, bill.id)
-        need = bill.amount - reserved
+        need = occurrence.unpaid - reserved
         if not need.is_positive():
             continue
-        paychecks = ctx.paychecks_until(due)
-        basis = Basis(Reason.BILL_DUE, bill.name, bill.amount, reserved, due, paychecks)
+        paychecks = ctx.paychecks_until(occurrence.due)
+        basis = occurrence.basis(Reason.BILL_DUE, bill.name, bill.amount, reserved, paychecks)
         request = _Request(Tier.BILL, bill.id, need.split(paychecks)[0], basis)
-        keyed.append(((bill.priority, due, bill.id), request))
+        keyed.append(((bill.priority, occurrence.due, bill.id), request))
     return tuple(request for _, request in sorted(keyed, key=lambda item: item[0]))
 
 
@@ -361,22 +390,102 @@ def _essential_requests(ctx: _Context) -> tuple[_Request, ...]:
 
 
 def _debt_minimum_requests(ctx: _Context) -> tuple[_Request, ...]:
-    """Each debt's minimum (capped at its balance), split like a bill, soonest due first."""
+    """Each debt's next unpaid minimum (capped at its balance), split like a bill,
+    soonest due first.
+
+    Paying more than the minimum is principal: it lowered the balance, and it does
+    not pay a later minimum (ADR 0018).
+    """
     keyed: list[tuple[tuple[date, str], _Request]] = []
     for debt in ctx.state.debts:
-        due = debt.next_due_after(ctx.paycheck.pay_date)
-        minimum = min(debt.minimum_payment, debt.balance)
+
+        def unpaid(paid: Money, debt: Debt = debt) -> Money:
+            return min(max(debt.minimum_payment - paid, Money.zero()), debt.balance)
+
+        occurrence = _next_unpaid(
+            ctx, ctx.state.payments_for(PaymentKind.DEBT, debt.id), debt.next_due_after, unpaid
+        )
+        if occurrence is None:
+            continue
         reserved = ctx.state.reserved_for(ReserveKind.DEBT, debt.id)
-        need = minimum - reserved
+        need = occurrence.unpaid - reserved
         if not need.is_positive():
             continue
-        paychecks = ctx.paychecks_until(due)
-        payoff = debt.balance < debt.minimum_payment
-        reason = Reason.DEBT_PAYOFF if payoff else Reason.DEBT_MINIMUM
-        basis = Basis(reason, debt.name, minimum, reserved, due, paychecks)
+        paychecks = ctx.paychecks_until(occurrence.due)
+        if debt.balance < debt.minimum_payment - occurrence.paid:
+            # Paying off: less is left on the debt than is left of the minimum. The
+            # balance already counts what was paid, so the line is just the balance.
+            occurrence = replace(occurrence, paid=Money.zero(), paid_on=None)
+            reason, total = Reason.DEBT_PAYOFF, debt.balance
+        else:
+            reason, total = Reason.DEBT_MINIMUM, debt.minimum_payment
+        basis = occurrence.basis(reason, debt.name, total, reserved, paychecks)
         request = _Request(Tier.DEBT_MINIMUM, debt.id, need.split(paychecks)[0], basis)
-        keyed.append(((due, debt.id), request))
+        keyed.append(((occurrence.due, debt.id), request))
     return tuple(request for _, request in sorted(keyed, key=lambda item: item[0]))
+
+
+@dataclass(frozen=True, slots=True)
+class _Occurrence:
+    """The occurrence of a bill or debt a plan reserves for, and what is paid around it."""
+
+    due: date
+    unpaid: Money
+    paid: Money
+    paid_on: date | None
+    paid_ahead: int
+    paid_through: date | None
+    paid_ahead_on: date | None
+
+    def basis(
+        self, reason: Reason, name: str, total: Money, reserved: Money, paychecks: int
+    ) -> Basis:
+        return Basis(
+            reason,
+            name,
+            total,
+            reserved,
+            self.due,
+            paychecks,
+            paid=self.paid,
+            paid_on=self.paid_on,
+            paid_ahead=self.paid_ahead,
+            paid_through=self.paid_through,
+            paid_ahead_on=self.paid_ahead_on,
+        )
+
+
+def _next_unpaid(
+    ctx: _Context,
+    payments: tuple[Payment, ...],
+    next_due_after: Callable[[date], date | None],
+    unpaid: Callable[[Money], Money],
+) -> _Occurrence | None:
+    """The first occurrence after this payday that is not fully paid (ADR 0018).
+
+    ``unpaid`` says what is still owed on an occurrence, given what was paid toward
+    it. Fully paid occurrences are skipped and counted. None when there is no later
+    occurrence, or when the next one owes nothing without having been paid (a debt
+    with nothing left on it).
+    """
+    due = next_due_after(ctx.paycheck.pay_date)
+    skipped: int = 0
+    through: date | None = None
+    ahead_on: date | None = None
+    while due is not None:
+        matched = [payment for payment in payments if payment.due == due]
+        paid = sum((payment.amount for payment in matched), Money.zero())
+        last_paid_on = max((payment.paid_on for payment in matched), default=None)
+        still_owed = unpaid(paid)
+        if still_owed.is_positive():
+            return _Occurrence(due, still_owed, paid, last_paid_on, skipped, through, ahead_on)
+        if last_paid_on is None:
+            return None
+        # This ends: each skipped occurrence has a payment of its own.
+        skipped, through = skipped + 1, due
+        ahead_on = last_paid_on if ahead_on is None else max(ahead_on, last_paid_on)
+        due = next_due_after(due)
+    return None
 
 
 def _emergency_fund_requests(ctx: _Context) -> tuple[_Request, ...]:

@@ -172,6 +172,8 @@ def get_planning_state_loader(session: SessionDep) -> PlanningStateLoader:
         goals=GoalRepository(session),
         reserves=ReserveRepository(session),
         balances=BalanceSnapshotRepository(session),
+        bill_payments=BillPaymentRepository(session),
+        debt_payments=DebtPaymentRepository(session),
     )
 
 

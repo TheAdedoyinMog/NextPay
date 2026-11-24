@@ -25,6 +25,14 @@ class BillPaymentRepository(UserOwnedRepository[BillPayment]):
             )
         ).all()
 
+    def counting_for(self, user_id: uuid.UUID) -> Sequence[BillPayment]:
+        """The user's payments that still count: every one not undone (ADR 0018)."""
+        return self._session.scalars(
+            self._owned_by(user_id)
+            .where(BillPayment.undone_at.is_(None))
+            .order_by(BillPayment.due_date, BillPayment.paid_on, BillPayment.id)
+        ).all()
+
     def find_any_owner(self, payment_id: uuid.UUID) -> BillPayment | None:
         """The payment with this id, whoever owns it. Only for spotting a reused id:
         the caller must check the owner before returning it (ADR 0015)."""
@@ -59,6 +67,14 @@ class DebtPaymentRepository(UserOwnedRepository[DebtPayment]):
             .order_by(
                 DebtPayment.paid_on.desc(), DebtPayment.created_at.desc(), DebtPayment.id.desc()
             )
+        ).all()
+
+    def counting_for(self, user_id: uuid.UUID) -> Sequence[DebtPayment]:
+        """The user's payments that still count: every one not undone (ADR 0018)."""
+        return self._session.scalars(
+            self._owned_by(user_id)
+            .where(DebtPayment.undone_at.is_(None))
+            .order_by(DebtPayment.due_date, DebtPayment.paid_on, DebtPayment.id)
         ).all()
 
     def find_any_owner(self, payment_id: uuid.UUID) -> DebtPayment | None:

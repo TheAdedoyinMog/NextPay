@@ -32,8 +32,9 @@ def input_hash(state: engine.FinancialState, paycheck: engine.Paycheck, as_of: d
 def canonical_input(
     state: engine.FinancialState, paycheck: engine.Paycheck, as_of: date
 ) -> dict[str, Any]:
-    """Every fact the planner reads, and nothing else (no row ids of balances,
-    no timestamps), in a form that does not depend on the order rows were loaded."""
+    """Every fact the planner reads, and nothing else (no row ids of balances or
+    payments, no timestamps), in a form that does not depend on the order rows were
+    loaded."""
     return {
         "engine_version": engine.ENGINE_VERSION,
         "as_of": as_of.isoformat(),
@@ -108,6 +109,28 @@ def canonical_input(
                     if not reserve.amount.is_zero()
                 ),
                 key=lambda reserve: (reserve["kind"], reserve["target_id"]),
+            ),
+            # Only payments for occurrences after this payday: the planner never reads the
+            # others (ADR 0018). No ids, so two equal payments stay two entries.
+            "payments": sorted(
+                (
+                    {
+                        "kind": payment.kind.value,
+                        "target_id": payment.target_id,
+                        "due": payment.due.isoformat(),
+                        "paid_on": payment.paid_on.isoformat(),
+                        "amount_cents": payment.amount.cents,
+                    }
+                    for payment in state.payments
+                    if payment.due > paycheck.pay_date
+                ),
+                key=lambda payment: (
+                    payment["kind"],
+                    payment["target_id"],
+                    payment["due"],
+                    payment["paid_on"],
+                    payment["amount_cents"],
+                ),
             ),
         },
     }

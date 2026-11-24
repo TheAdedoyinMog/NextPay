@@ -11,7 +11,10 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
+import nextpay_engine as engine
 from app.core.errors import (
     InvalidInputError,
     NotFoundError,
@@ -32,7 +35,12 @@ from app.models import (
     Reserve,
     User,
 )
+from app.services.payments import BillPaymentInput, DebtPaymentInput, PaymentService
+from app.services.plan_inputs import input_hash
+from app.services.plan_records import ExplainedAllocation, PlanDetails
+from app.services.planning_state import PlanningStateLoader
 from app.services.plans import PlanService
+from app.services.reserves import add_to_reserve
 from nextpay_engine import ENGINE_VERSION, GoalKind, GoalStatus, Reason, ReserveKind, Tier
 
 ADA = User(
@@ -831,3 +839,123 @@ def test_an_old_plan_still_explains_itself_after_its_targets_are_gone(
     assert read.projections[0].explanation == made.projections[0].explanation
     assert read.summary == made.summary
     assert read.source is world.job
+
+
+# --- what is already paid (ADR 0018) -----------------------------------------------
+
+OCT_16, OCT_20, NOV_20 = date(2026, 10, 16), date(2026, 10, 20), date(2026, 11, 20)
+
+
+def line_for(details: PlanDetails, tier: Tier) -> ExplainedAllocation:
+    (line,) = (a for a in details.allocations if a.row.tier is tier)
+    return line
+
+
+def test_a_minimum_paid_early_is_not_reserved_again_by_the_next_plan(
+    plan_service: PlanService, payment_service: PaymentService, world: World
+) -> None:
+    first, _ = plan_service.generate(ADA, world.job.id, PAYDAY)
+    car = line_for(first, Tier.DEBT_MINIMUM).row
+    assert (car.requested_cents, car.due_date) == (7_500, OCT_20)
+    plan_service.commit(ADA, first.plan.id)
+
+    # "Mark paid" on that line names its occurrence, Oct 20; it is paid on Oct 7.
+    payment_service.pay_debt(ADA, world.car.id, DebtPaymentInput(due_date=OCT_20))
+
+    second, _ = plan_service.generate(ADA, world.job.id, OCT_16)
+    line = line_for(second, Tier.DEBT_MINIMUM)
+    car = line.row
+    assert (car.requested_cents, car.due_date, car.paychecks) == (5_000, NOV_20, 3)
+    assert (car.paid_ahead, car.paid_through, car.paid_ahead_on) == (1, OCT_20, date(2026, 10, 7))
+    assert line.explanation == (
+        "We reserved $50 toward Car loan because the $150 minimum payment is due Nov 20 and "
+        "is split across the 3 paychecks before then. "
+        "The Oct 20 minimum payment was already paid on Oct 7."
+    )
+    # Read back from storage, it explains itself the same way.
+    stored = plan_service.get(ADA, second.plan.id)
+    assert line_for(stored, Tier.DEBT_MINIMUM).explanation == line.explanation
+
+
+def test_a_partly_paid_bill_needs_only_the_rest(
+    plan_service: PlanService, payment_service: PaymentService, world: World
+) -> None:
+    payment_service.pay_bill(
+        ADA, world.rent.id, BillPaymentInput(amount_cents=30_000, due_date=OCT_20)
+    )
+    rent = line_for(plan_service.generate(ADA, world.job.id, PAYDAY)[0], Tier.BILL)
+    # $800 less the $300 paid, over Oct 2 and Oct 16.
+    assert (rent.row.requested_cents, rent.row.paid_cents) == (25_000, 30_000)
+    assert rent.explanation == (
+        "We reserved $250 toward Rent because the $800 bill is due Oct 20; "
+        "with $300 already paid on Oct 7, the rest is split across the 2 paychecks before then."
+    )
+
+
+def test_paying_ahead_makes_a_draft_out_of_date_and_undoing_makes_it_current_again(
+    plan_service: PlanService, payment_service: PaymentService, world: World
+) -> None:
+    # Nothing is set aside, so before ADR 0018 this payment changed no input at all.
+    draft, _ = plan_service.generate(ADA, world.job.id, OCT_16)
+    payment, _ = payment_service.pay_debt(ADA, world.car.id, DebtPaymentInput(due_date=OCT_20))
+    assert plan_service.get(ADA, draft.plan.id).is_out_of_date
+
+    payment_service.undo_debt_payment(ADA, world.car.id, payment.id)
+    assert not plan_service.get(ADA, draft.plan.id).is_out_of_date
+
+
+def test_a_payment_for_an_occurrence_behind_the_payday_leaves_the_draft_current(
+    plan_service: PlanService, payment_service: PaymentService, world: World
+) -> None:
+    # Oct 20 is behind the Oct 30 payday, so its plan never reads this payment.
+    draft, _ = plan_service.generate(ADA, world.job.id, date(2026, 10, 30))
+    payment_service.pay_bill(ADA, world.rent.id, BillPaymentInput(amount_cents=1, due_date=OCT_20))
+    assert not plan_service.get(ADA, draft.plan.id).is_out_of_date
+
+
+@settings(
+    max_examples=60, deadline=None, suppress_health_check=[HealthCheck.function_scoped_fixture]
+)
+@given(
+    pay_rent=st.booleans(),
+    amount=st.integers(min_value=1, max_value=1_000_000),
+    month=st.integers(min_value=10, max_value=12),
+    reserved=st.integers(min_value=0, max_value=100_000),
+    payday=st.sampled_from([PAYDAY, OCT_16, date(2026, 10, 30)]),
+)
+def test_paying_and_then_undoing_plans_exactly_as_never_paying(
+    payment_service: PaymentService,
+    state_loader: PlanningStateLoader,
+    world: World,
+    reserves: Fake,
+    pay_rent: bool,
+    amount: int,
+    month: int,
+    reserved: int,
+    payday: date,
+) -> None:
+    """Through the real services: a payment draws the reserve and the debt's balance down
+    and becomes a plan input; its undo puts both back and drops out (ADR 0017)."""
+    reserves.rows.clear()
+    kind, target = (ReserveKind.BILL, world.rent) if pay_rent else (ReserveKind.DEBT, world.car)
+    if reserved:
+        add_to_reserve(reserves, ADA.id, kind, target.id, reserved)
+    paycheck = engine.Paycheck(str(world.job.id), payday, engine.Money(150_000))
+
+    def plan_and_hash() -> tuple[engine.PlanResult, str]:
+        state = state_loader.load(ADA).state
+        return engine.plan_paycheck(state, paycheck, PAYDAY), input_hash(state, paycheck, PAYDAY)
+
+    never_paid = plan_and_hash()
+    due = date(2026, month, 20)
+    if pay_rent:
+        bill_payment, _ = payment_service.pay_bill(
+            ADA, target.id, BillPaymentInput(amount_cents=amount, due_date=due)
+        )
+        payment_service.undo_bill_payment(ADA, target.id, bill_payment.id)
+    else:
+        debt_payment, _ = payment_service.pay_debt(
+            ADA, target.id, DebtPaymentInput(amount_cents=amount, due_date=due)
+        )
+        payment_service.undo_debt_payment(ADA, target.id, debt_payment.id)
+    assert plan_and_hash() == never_paid

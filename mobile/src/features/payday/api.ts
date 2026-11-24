@@ -144,15 +144,18 @@ export function usePayBill() {
   });
 }
 
-/** Records a debt's minimum payment (or what is left, if less). Same id rule as bills. */
+/**
+ * Records a debt's minimum payment (or what is left, if less) for the occurrence its plan line
+ * names, so a minimum paid early is not reserved again (ADR 0018). Same id rule as bills.
+ */
 export function usePayDebt() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (args: { debtId: string; paymentId: string }) =>
+    mutationFn: (args: { debtId: string; paymentId: string; dueDate: string | null }) =>
       unwrap(
         api.POST('/debts/{debt_id}/payments', {
           params: { path: { debt_id: args.debtId } },
-          body: { id: args.paymentId },
+          body: { id: args.paymentId, due_date: args.dueDate },
         }),
       ),
     onSuccess: () => afterMoneyMoved(queryClient),

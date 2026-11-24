@@ -64,7 +64,7 @@ export function PlanLines({ plan }: { plan: Plan }) {
         <View key={`${group.tier}-${group.lines[0]?.position}`}>
           <SectionTitle>{TIER_TITLES[group.tier]}</SectionTitle>
           {group.lines.map((line) => (
-            <LineRow key={line.position} line={line} plan={plan} canPay={canPay} />
+            <LineRow key={line.position} line={line} canPay={canPay} />
           ))}
         </View>
       ))}
@@ -72,7 +72,7 @@ export function PlanLines({ plan }: { plan: Plan }) {
   );
 }
 
-function LineRow({ line, plan, canPay }: { line: PlanLine; plan: Plan; canPay: boolean }) {
+function LineRow({ line, canPay }: { line: PlanLine; canPay: boolean }) {
   return (
     <View
       style={styles.line}
@@ -90,7 +90,7 @@ function LineRow({ line, plan, canPay }: { line: PlanLine; plan: Plan; canPay: b
         <BillPay billId={line.target_id} dueDate={line.due_date} />
       ) : null}
       {canPay && line.target_id && line.tier === 'debt_minimum' ? (
-        <DebtPay debtId={line.target_id} since={plan.paycheck.pay_date} />
+        <DebtPay debtId={line.target_id} dueDate={line.due_date} />
       ) : null}
     </View>
   );
@@ -157,7 +157,7 @@ function BillPay({ billId, dueDate }: { billId: string; dueDate: string | null }
   );
 }
 
-function DebtPay({ debtId, since }: { debtId: string; since: string }) {
+function DebtPay({ debtId, dueDate }: { debtId: string; dueDate: string | null }) {
   const debts = useDebts();
   const payments = useDebtPayments(debtId);
   const pay = usePayDebt();
@@ -167,16 +167,17 @@ function DebtPay({ debtId, since }: { debtId: string; since: string }) {
   if (!debt || !payments.isSuccess) {
     return null;
   }
-  // Calendar dates as YYYY-MM-DD strings compare correctly as text.
-  const paid = payments.data.find((payment) => payment.paid_on >= since);
+  const paid = payments.data.find((payment) => payment.due_date === dueDate);
   const send = () =>
-    pay.mutate({ debtId, paymentId: paymentId.current() }, { onSuccess: paymentId.done });
+    pay.mutate({ debtId, paymentId: paymentId.current(), dueDate }, { onSuccess: paymentId.done });
   const ask = () =>
     confirmDelete({
       title: `Mark ${debt.name} paid?`,
       message: `Records your minimum payment of ${formatCents(
         debt.minimum_payment_cents,
-      )} paid today, or what's left if that is less. ${CAN_UNDO}`,
+      )} paid today${
+        dueDate ? ` for the one due ${formatCalendarDate(dueDate)}` : ''
+      }, or what's left if that is less. ${CAN_UNDO}`,
       confirmLabel: 'Mark paid',
       onConfirm: send,
     });

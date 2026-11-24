@@ -98,6 +98,7 @@ def test_recording_the_minimum_takes_an_empty_body(
     assert set(payment) == {
         "id",
         "debt_id",
+        "due_date",
         "paid_on",
         "amount_cents",
         "created_at",
@@ -107,6 +108,8 @@ def test_recording_the_minimum_takes_an_empty_body(
     assert (payment["undone_at"], payment["can_undo"]) == (None, True)
     assert (payment["debt_id"], payment["amount_cents"]) == (loan["id"], 15_000)
     assert payment["paid_on"] == "2026-10-07"
+    # The due date closest to Oct 7: Oct 20 is 13 days away, Sep 20 is 17 (ADR 0018).
+    assert payment["due_date"] == "2026-10-20"
     assert balance(client, ada, loan) == 885_000
     assert reserved(db_session, loan) == 0
     assert client.get(f"/debts/{loan['id']}/payments", headers=ada).json() == {"items": [payment]}
@@ -140,6 +143,27 @@ def test_the_balance_and_the_reserve_go_down_but_not_below_zero(
     assert (balance(client, ada, card), reserved(db_session, card)) == (900_000, 3_500)
 
 
+def test_a_payment_can_name_the_minimum_it_pays_ahead_of_time(
+    client: TestClient, ada: Headers
+) -> None:
+    loan = add(client, ada, "/debts", CAR_LOAN)
+    response = pay(client, ada, loan, due_date="2026-11-20")
+    assert response.status_code == 201, response.text
+    assert (response.json()["due_date"], response.json()["paid_on"]) == (
+        "2026-11-20",
+        "2026-10-07",
+    )
+
+
+def test_the_named_occurrence_must_be_one_of_the_debts_due_dates(
+    client: TestClient, ada: Headers, db_session: Session
+) -> None:
+    loan = add(client, ada, "/debts", CAR_LOAN)
+    error = assert_error(pay(client, ada, loan, due_date="2026-11-21"), 422, "invalid_input")
+    assert error["message"] == "2026-11-21 is not a due date of Car loan."
+    assert db_session.scalar(select(func.count()).select_from(DebtPayment)) == 0
+
+
 def test_with_nothing_owed_the_amount_must_be_given(
     client: TestClient, ada: Headers, db_session: Session
 ) -> None:
@@ -156,7 +180,7 @@ def test_with_nothing_owed_the_amount_must_be_given(
         ({"amount_cents": 150.5}, "amount_cents"),
         ({"amount_cents": 100_000_000_001}, "amount_cents"),
         ({"paid_on": "last week"}, "paid_on"),
-        ({"due_date": "2026-10-20"}, "due_date"),  # a debt payment has no occurrence
+        ({"due_date": "the 20th"}, "due_date"),
     ],
 )
 def test_invalid_bodies_are_rejected(

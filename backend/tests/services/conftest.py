@@ -212,6 +212,9 @@ class FakeReserves(FakeOwnedStore):
 
 
 class FakeBillPayments(FakeOwnedStore):
+    def counting_for(self, user_id: uuid.UUID) -> list[Any]:
+        return [row for row in self.list_for(user_id) if row.undone_at is None]
+
     def unreserved_since(self, user_id: uuid.UUID, since: Any) -> int:
         return sum(
             row.amount_cents - row.reserve_drawn_cents
@@ -232,6 +235,9 @@ class FakeBillPayments(FakeOwnedStore):
 
 
 class FakeDebtPayments(FakeOwnedStore):
+    def counting_for(self, user_id: uuid.UUID) -> list[Any]:
+        return [row for row in self.list_for(user_id) if row.undone_at is None]
+
     def unreserved_since(self, user_id: uuid.UUID, since: Any) -> int:
         return sum(
             row.amount_cents - row.reserve_drawn_cents
@@ -464,6 +470,8 @@ def state_loader(
     goals: FakeGoals,
     reserves: FakeReserves,
     snapshots: FakeBalanceSnapshots,
+    bill_payments: FakeBillPayments,
+    debt_payments: FakeDebtPayments,
 ) -> PlanningStateLoader:
     return PlanningStateLoader(
         income_sources=income_sources,
@@ -473,6 +481,8 @@ def state_loader(
         goals=goals,
         reserves=reserves,
         balances=snapshots,
+        bill_payments=bill_payments,
+        debt_payments=debt_payments,
     )
 
 

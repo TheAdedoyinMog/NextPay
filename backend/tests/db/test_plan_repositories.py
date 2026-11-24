@@ -296,6 +296,7 @@ def test_a_debts_payments_are_listed_newest_first_for_its_owner_only(
             DebtPayment(
                 user_id=setup.user.id,
                 debt_id=setup.car.id,
+                due_date=date(2026, 10, 20),
                 paid_on=date(2026, 10, day),
                 amount_cents=15_000,
                 reserve_drawn_cents=0,
@@ -372,6 +373,7 @@ def test_what_payments_paid_beyond_their_reserves_is_summed_from_an_instant(
         DebtPayment(
             user_id=ada.user.id,
             debt_id=ada.car.id,
+            due_date=date(2026, 10, 20),
             paid_on=since.date(),
             amount_cents=15_000,
             reserve_drawn_cents=7_500,
@@ -394,6 +396,7 @@ def test_what_payments_paid_beyond_their_reserves_is_summed_from_an_instant(
         DebtPayment(
             user_id=ada.user.id,
             debt_id=ada.car.id,
+            due_date=date(2026, 10, 20),
             paid_on=since.date(),
             amount_cents=50_000,
             reserve_drawn_cents=0,

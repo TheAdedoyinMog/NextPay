@@ -353,6 +353,7 @@ def debt_payment(
     return DebtPayment(
         user_id=user.id,
         debt_id=debt.id,
+        due_date=date(2026, 10, 20),
         paid_on=date(2026, 10, 19),
         amount_cents=amount_cents,
         reserve_drawn_cents=reserve_drawn_cents,

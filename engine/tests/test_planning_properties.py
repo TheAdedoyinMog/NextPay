@@ -1,5 +1,6 @@
 """Property tests: rules the waterfall must keep for any financial state."""
 
+from dataclasses import replace
 from datetime import date, timedelta
 
 from hypothesis import given
@@ -13,6 +14,8 @@ from nextpay_engine.domain import (
     GoalKind,
     IncomeSource,
     Paycheck,
+    Payment,
+    PaymentKind,
     Reserve,
     ReserveKind,
 )
@@ -100,7 +103,29 @@ def states(draw: st.DrawFn, single_source: bool = False) -> FinancialState:
         )
     balance = Money(draw(st.integers(min_value=-200_000, max_value=1_000_000)))
     share_bps = draw(st.sampled_from([0, 2000, 2000, 3333, 10_000]))
-    return FinancialState(balance, sources, bills, essentials, debts, goals, reserves, share_bps)
+    payable: list[Bill | Debt] = [*bills, *debts]
+    payments: tuple[Payment, ...] = ()
+    if payable:
+        payments = tuple(
+            draw(payments_toward(target))
+            for target in draw(st.lists(st.sampled_from(payable), max_size=6))
+        )
+    return FinancialState(
+        balance, sources, bills, essentials, debts, goals, reserves, share_bps, payments
+    )
+
+
+@st.composite
+def payments_toward(draw: st.DrawFn, target: Bill | Debt) -> Payment:
+    """A payment toward one of ``target``'s due dates near the paydays planned, now and
+    then toward a date that is not a due date (its schedule was edited since)."""
+    due_dates = target.due_dates_between(BASE - timedelta(days=40), BASE + timedelta(days=200))
+    due = draw(st.sampled_from(due_dates) if due_dates and draw(st.integers(0, 9)) else near_dates)
+    kind = PaymentKind.BILL if isinstance(target, Bill) else PaymentKind.DEBT
+    # Mostly about the size of a bill or minimum, so occurrences get exactly paid, too.
+    size = target.amount if isinstance(target, Bill) else target.minimum_payment
+    amount = size if size.is_positive() and draw(st.booleans()) else draw(positive)
+    return Payment(kind, target.id, due, draw(near_dates), amount)
 
 
 @st.composite
@@ -252,3 +277,92 @@ def test_everything_in_a_plan_can_be_explained(case: tuple[FinancialState, PlanR
     for projection in result.goal_projections:
         assert explain_projection(projection, result).endswith(".")
     assert explain_plan(result).endswith(".")
+
+
+# --- Paid occurrences (ADR 0018) ---------------------------------------------
+
+
+def paid_toward(state: FinancialState, kind: PaymentKind, target_id: str, due: date) -> Money:
+    return sum(
+        (p.amount for p in state.payments_for(kind, target_id) if p.due == due), Money.zero()
+    )
+
+
+@given(plans())
+def test_no_line_asks_for_more_than_its_occurrence_still_owes(
+    case: tuple[FinancialState, PlanResult],
+) -> None:
+    state, result = case
+    bills = {bill.id: bill for bill in state.bills}
+    debts = {debt.id: debt for debt in state.debts}
+    for a in result.allocations:
+        due = a.basis.due
+        if a.tier is Tier.BILL:
+            assert due is not None
+            paid = paid_toward(state, PaymentKind.BILL, a.target_id, due)
+            unpaid = max(bills[a.target_id].amount - paid, Money.zero())
+            reserved = state.reserved_for(ReserveKind.BILL, a.target_id)
+        elif a.tier is Tier.DEBT_MINIMUM:
+            assert due is not None
+            debt = debts[a.target_id]
+            paid = paid_toward(state, PaymentKind.DEBT, a.target_id, due)
+            unpaid = min(max(debt.minimum_payment - paid, Money.zero()), debt.balance)
+            reserved = state.reserved_for(ReserveKind.DEBT, a.target_id)
+        else:
+            continue
+        assert due > result.paycheck.pay_date
+        assert Money.zero() < a.requested <= unpaid - reserved
+
+
+@given(plans())
+def test_payments_due_on_or_before_the_payday_change_nothing(
+    case: tuple[FinancialState, PlanResult],
+) -> None:
+    # Why the input hash leaves them out (backend plan_inputs).
+    state, result = case
+    later = tuple(p for p in state.payments if p.due > result.paycheck.pay_date)
+    assert plan_paycheck(replace(state, payments=later), result.paycheck, result.as_of) == result
+
+
+@given(plans(), st.data())
+def test_paying_and_then_undoing_gives_the_same_plan_as_never_paying(
+    case: tuple[FinancialState, PlanResult], data: st.DataObject
+) -> None:
+    """Pay as the backend does (ADR 0011, 0016): draw the reserve down, lower the debt's
+    balance, record the payment. Undo as it does (ADR 0017): put back exactly what was
+    taken, and leave the payment out."""
+    state, result = case
+    payable: list[Bill | Debt] = [*state.bills, *state.debts]
+    if not payable:
+        return
+    payment = data.draw(payments_toward(data.draw(st.sampled_from(payable))))
+    kind = ReserveKind.BILL if payment.kind is PaymentKind.BILL else ReserveKind.DEBT
+
+    reserve = state.reserved_for(kind, payment.target_id)
+    drawn = min(reserve, payment.amount)
+    debts = state.debts
+    reduced = Money.zero()
+    if kind is ReserveKind.DEBT:
+        debt = next(d for d in debts if d.id == payment.target_id)
+        reduced = min(payment.amount, debt.balance)
+        debts = tuple(replace(d, balance=d.balance - reduced) if d is debt else d for d in debts)
+    others = tuple(r for r in state.reserves if (r.kind, r.target_id) != (kind, payment.target_id))
+    paid = replace(
+        state,
+        debts=debts,
+        reserves=(*others, Reserve(kind, payment.target_id, reserve - drawn)),
+        payments=(*state.payments, payment),
+    )
+
+    undone = replace(
+        paid,
+        debts=tuple(
+            replace(d, balance=d.balance + reduced) if d.id == payment.target_id else d
+            for d in paid.debts
+        )
+        if kind is ReserveKind.DEBT
+        else paid.debts,
+        reserves=(*others, Reserve(kind, payment.target_id, reserve)),
+        payments=state.payments,
+    )
+    assert plan_paycheck(undone, result.paycheck, result.as_of) == result

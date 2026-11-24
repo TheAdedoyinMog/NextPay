@@ -213,7 +213,9 @@ def to_debt_list_response(debts: Iterable[Debt], reserved: Reserved) -> DebtList
 
 
 def to_debt_payment_input(body: DebtPaymentRequest) -> DebtPaymentInput:
-    return DebtPaymentInput(id=body.id, amount_cents=body.amount_cents, paid_on=body.paid_on)
+    return DebtPaymentInput(
+        id=body.id, amount_cents=body.amount_cents, paid_on=body.paid_on, due_date=body.due_date
+    )
 
 
 def to_debt_payment_response(
@@ -222,6 +224,7 @@ def to_debt_payment_response(
     return DebtPaymentResponse(
         id=payment.id,
         debt_id=payment.debt_id,
+        due_date=payment.due_date,
         paid_on=payment.paid_on,
         amount_cents=payment.amount_cents,
         created_at=payment.created_at,
@@ -395,6 +398,11 @@ def _to_allocation_response(line: ExplainedAllocation) -> AllocationResponse:
         days_covered=row.days_covered,
         days_in_period=row.days_in_period,
         share_bps=row.share_bps,
+        paid_cents=row.paid_cents,
+        paid_on=row.paid_on,
+        paid_ahead=row.paid_ahead,
+        paid_through=row.paid_through,
+        paid_ahead_on=row.paid_ahead_on,
         explanation=line.explanation,
     )
 

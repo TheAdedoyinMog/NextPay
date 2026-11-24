@@ -77,7 +77,13 @@ beforeEach(async () => {
         explanation: RENT_EXPLANATION,
       },
       { tier: 'essential', name: 'Groceries', target_id: groceries.id, funded_cents: 20000 },
-      { tier: 'debt_minimum', name: 'Car loan', target_id: car.id, funded_cents: 15000 },
+      {
+        tier: 'debt_minimum',
+        name: 'Car loan',
+        target_id: car.id,
+        funded_cents: 15000,
+        due_date: '2026-12-20',
+      },
       {
         tier: 'emergency_fund',
         name: 'Emergency fund',
@@ -394,6 +400,21 @@ describe('marking paid', () => {
 
     expect(await screen.findByText('✓ Paid $150.00 on Nov 20, 2026')).toBeTruthy();
     expect(backend.items(EMAIL, '/debts')[0]?.balance_cents).toBe(485000);
+  });
+
+  it('pays the minimum its line names, so the next plan knows it is paid (ADR 0018)', async () => {
+    await makeDraft();
+    await commitDraft();
+    const confirmation = captureConfirmations();
+    await fireEvent.press(await screen.findByRole('button', { name: 'Mark Car loan paid' }));
+    expect(jest.mocked(Alert.alert).mock.calls.at(-1)?.[1]).toContain(
+      'for the one due Dec 20, 2026',
+    );
+    confirmation()();
+
+    expect(await screen.findByText('✓ Paid $150.00 on Nov 20, 2026')).toBeTruthy();
+    const [sent] = backend.bodies.filter((b) => b.call === `POST /debts/${ids.car}/payments`);
+    expect(sent?.body).toMatchObject({ due_date: '2026-12-20' });
   });
 });
 

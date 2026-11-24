@@ -46,13 +46,15 @@ class Debt(UserOwnedMixin, TimestampsMixin, Base):
 
 
 class DebtPayment(UserOwnedMixin, TimestampsMixin, Base):
-    """A payment toward a debt; it draws the debt's reserve and its balance down."""
+    """A payment toward one occurrence of a debt's minimum; it draws the debt's reserve and
+    its balance down."""
 
     __tablename__ = "debt_payments"
     __table_args__ = (
         owned_by_user(),
         tenant_fk("debt_id", "debts", ondelete="CASCADE"),
         Index("ix_debt_payments_debt_id_paid_on", "debt_id", "paid_on"),
+        Index("ix_debt_payments_debt_id_due_date", "debt_id", "due_date"),
         CheckConstraint("amount_cents > 0", name="amount_positive"),
         CheckConstraint(
             "reserve_drawn_cents >= 0 AND reserve_drawn_cents <= amount_cents",
@@ -75,3 +77,5 @@ class DebtPayment(UserOwnedMixin, TimestampsMixin, Base):
     balance_reduced_cents: Mapped[Cents] = mapped_column(sort_order=4)
     # When the payment was undone: it then counts for nothing, and is kept as history.
     undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), sort_order=5)
+    # Which occurrence this pays, e.g. the Nov 25 minimum (ADR 0018), as for bills.
+    due_date: Mapped[date] = mapped_column(sort_order=6)
