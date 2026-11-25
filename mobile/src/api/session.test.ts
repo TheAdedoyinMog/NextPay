@@ -1,6 +1,7 @@
 import { api, unwrap } from '@/api/client';
 import { session } from '@/api/session';
 import { createFakeBackend, type FakeBackend } from '@/test/fakeBackend';
+import * as files from '@/test/fakeFileSystem';
 import * as keychain from '@/test/fakeSecureStore';
 
 jest.mock('@/api/config', () => ({ API_BASE_URL: 'http://api.test' }));
@@ -37,8 +38,91 @@ async function until(condition: () => boolean) {
 
 beforeEach(async () => {
   keychain.reset();
+  files.reset();
   backend = createFakeBackend();
   await session.restore();
+});
+
+describe('first launch after installing (ADR 0019)', () => {
+  /** iOS deleted the app, which took the Documents directory, but kept the Keychain. */
+  function reinstallKeepingKeychain() {
+    const tokens = backend.issueSession();
+    keychain.items.set(keychain.REFRESH_TOKEN_KEY, tokens.refresh_token);
+    files.uninstall();
+    keychain.getItemAsync.mockClear();
+    keychain.deleteItemAsync.mockClear();
+    return tokens;
+  }
+
+  it('signs out a session left in the Keychain by a deleted install', async () => {
+    reinstallKeepingKeychain();
+
+    await session.restore();
+
+    expect(session.getState()).toEqual({ status: 'signedOut', reason: 'none' });
+    expect(keychain.items.has(keychain.REFRESH_TOKEN_KEY)).toBe(false);
+    expect(keychain.getItemAsync).not.toHaveBeenCalled(); // never even read the old token
+    expect(backend.calls).toEqual([]); // decided offline, like every launch
+  });
+
+  it('clears the Keychain before marking the install, so stopping halfway is safe', async () => {
+    reinstallKeepingKeychain();
+    const order: string[] = [];
+    keychain.deleteItemAsync.mockImplementationOnce(async (key: string) => {
+      order.push(files.files.has(files.INSTALL_MARKER) ? 'cleared after marking' : 'cleared');
+      keychain.items.delete(key);
+    });
+
+    await session.restore();
+
+    expect(order).toEqual(['cleared']);
+    expect(files.files.has(files.INSTALL_MARKER)).toBe(true);
+  });
+
+  it('keeps a session made after the first launch', async () => {
+    reinstallKeepingKeychain();
+    await session.restore(); // the first launch: marks the install
+    const tokens = backend.issueSession();
+    await session.start(tokens); // the user signs in again
+
+    await session.restore(); // the next launch
+
+    expect(session.getState()).toEqual({ status: 'signedIn' });
+    expect(keychain.items.get(keychain.REFRESH_TOKEN_KEY)).toBe(tokens.refresh_token);
+  });
+
+  it('leaves an existing install alone', async () => {
+    await launchSignedIn();
+
+    expect(session.getState()).toEqual({ status: 'signedIn' });
+    expect(keychain.deleteItemAsync).not.toHaveBeenCalled();
+  });
+
+  it('starts signed out, and tries again next launch, when the Keychain cannot be cleared', async () => {
+    reinstallKeepingKeychain();
+    keychain.deleteItemAsync.mockRejectedValueOnce(new Error('Keychain locked'));
+
+    await session.restore();
+
+    expect(session.getState()).toEqual({ status: 'signedOut', reason: 'none' });
+    expect(files.files.has(files.INSTALL_MARKER)).toBe(false); // so the next launch clears
+
+    await session.restore();
+
+    expect(session.getState()).toEqual({ status: 'signedOut', reason: 'none' });
+    expect(keychain.items.has(keychain.REFRESH_TOKEN_KEY)).toBe(false);
+    expect(files.files.has(files.INSTALL_MARKER)).toBe(true);
+  });
+
+  it('starts signed out when the install cannot be marked', async () => {
+    reinstallKeepingKeychain();
+    files.failures.write = true;
+
+    await session.restore();
+
+    expect(session.getState()).toEqual({ status: 'signedOut', reason: 'none' });
+    expect(keychain.items.has(keychain.REFRESH_TOKEN_KEY)).toBe(false);
+  });
 });
 
 describe('launch', () => {

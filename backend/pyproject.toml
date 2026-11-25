@@ -15,7 +15,7 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "pydantic-settings>=2.6",
     "argon2-cffi>=23.1",
-    "pyjwt>=2.10",
+    "pyjwt[crypto]>=2.10",  # crypto: RS256, to verify Apple identity tokens (ADR 0019)
     "email-validator>=2.2",
     "tzdata>=2024.1",
 ]

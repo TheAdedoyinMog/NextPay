@@ -11,6 +11,7 @@
  */
 import type { components } from '@/api/schema';
 
+import { sha256Hex } from './fakeCrypto';
 import { createFakePlanning } from './fakePlanning';
 
 type TokenResponse = components['schemas']['TokenResponse'];
@@ -147,6 +148,12 @@ export function createFakeBackend() {
   const data = new Map<string, Map<string, Item[]>>();
   let idSerial = 0;
 
+  /**
+   * Accounts made with Sign in with Apple, by Apple user ID, with the name the first sign-in
+   * sent. Internally such an account is keyed `apple:<id>` wherever others use the email.
+   */
+  const appleAccounts = new Map<string, { displayName: string | null }>();
+
   /** Each user's settings, by email, as PUT /me/settings stores them. */
   const settings = new Map<string, { timezone: string; no_deadline_goal_share_bps: number }>();
   const planning = createFakePlanning({
@@ -192,6 +199,9 @@ export function createFakeBackend() {
     rejectEveryAccessToken: false,
     /** /auth/refresh answers with this status instead of working. */
     refreshFailsWith: null as number | null,
+
+    /** Apple IDs that have signed in, with the name their first sign-in sent. */
+    appleAccounts,
 
     addUser(email: string, password: string): void {
       passwords.set(email, password);
@@ -350,6 +360,8 @@ export function createFakeBackend() {
         return register(body);
       case 'POST /auth/login':
         return login(body);
+      case 'POST /auth/apple':
+        return appleSignIn(body);
       case 'POST /auth/refresh':
         if (refreshGate) {
           await refreshGate;
@@ -535,6 +547,27 @@ export function createFakeBackend() {
     return json(200, backend.issueSession(body.email));
   }
 
+  /**
+   * Like the real /auth/apple (ADR 0019): the token must carry the hash of the raw nonce sent
+   * with it, the account is found by Apple user ID, and the name is kept from the first time.
+   */
+  function appleSignIn(body: {
+    identity_token: string;
+    nonce: string;
+    full_name?: string | null;
+  }): Response {
+    const [kind, appleUserId, nonceHash] = body.identity_token.split('|');
+    if (kind !== 'apple-identity' || !appleUserId || nonceHash !== sha256Hex(body.nonce)) {
+      return error(401, 'invalid_apple_token', "Sign in with Apple didn't work. Try again.");
+    }
+    if (!appleAccounts.has(appleUserId)) {
+      appleAccounts.set(appleUserId, { displayName: body.full_name ?? null });
+    }
+    serial += 1;
+    families.set(serial, { email: `apple:${appleUserId}`, revoked: false });
+    return json(200, issue(serial));
+  }
+
   function revokeFamily(family: number): void {
     const record = families.get(family);
     if (record) {
@@ -588,10 +621,13 @@ export function createFakeBackend() {
     if (token.expired) {
       return error(401, 'token_expired', 'The access token has expired.');
     }
+    const account = families.get(token.family)?.email ?? '';
+    const apple = account.startsWith('apple:') ? appleAccounts.get(account.slice(6)) : undefined;
     const user: UserResponse = {
-      id: `user-${token.family}`,
-      email: families.get(token.family)?.email ?? '',
-      ...backend.settingsFor(families.get(token.family)?.email ?? ''),
+      id: `user-${account}`,
+      email: apple ? null : account,
+      display_name: apple ? apple.displayName : null,
+      ...backend.settingsFor(account),
       created_at: '2026-11-01T00:00:00Z',
     };
     return json(200, user);

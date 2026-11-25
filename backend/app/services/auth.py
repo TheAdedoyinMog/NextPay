@@ -1,4 +1,5 @@
-"""Accounts and sessions: register, log in, refresh, log out (ADR 0006, ADR 0009).
+"""Accounts and sessions: register, log in, Sign in with Apple, refresh, log out
+(ADR 0006, ADR 0009, ADR 0019).
 
 A session is a family of refresh tokens that starts at login. Each refresh
 rotates the token: the old one is marked ``replaced_by_id`` and a new one joins
@@ -15,10 +16,12 @@ from typing import Protocol
 
 from email_validator import EmailNotValidError, validate_email
 
+from app.core.apple import AppleClaims
 from app.core.clock import Clock
 from app.core.errors import (
     EmailUnavailableError,
     InvalidAccessTokenError,
+    InvalidAppleTokenError,
     InvalidCredentialsError,
     InvalidInputError,
     RefreshTokenExpiredError,
@@ -33,7 +36,7 @@ from app.core.security import (
     hash_refresh_token,
     new_refresh_token,
 )
-from app.models import RefreshToken, User
+from app.models import AppleIdentity, RefreshToken, User
 from app.services.protocols import Transaction
 
 logger = logging.getLogger(__name__)
@@ -49,6 +52,15 @@ class RefreshTokenStore(Protocol):
     def get_by_hash_for_update(self, token_hash: str) -> RefreshToken | None: ...
     def add(self, token: RefreshToken) -> RefreshToken: ...
     def revoke_family(self, user_id: uuid.UUID, family_id: uuid.UUID, at: datetime) -> int: ...
+
+
+class AppleIdentityStore(Protocol):
+    def get_by_apple_user_id(self, apple_user_id: str) -> AppleIdentity | None: ...
+    def add_with_user(self, user: User, identity: AppleIdentity) -> bool: ...
+
+
+class AppleVerifier(Protocol):
+    def verify(self, identity_token: str, nonce: str, now: datetime) -> AppleClaims: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +79,12 @@ def normalize_email(email: str) -> str:
     return result.normalized.lower()
 
 
+def _clean_name(name: str | None) -> str | None:
+    """A name as stored: spaces collapsed, and None when nothing is left."""
+    cleaned = " ".join((name or "").split())
+    return cleaned or None
+
+
 def check_password(password: str) -> None:
     if not MIN_PASSWORD_LENGTH <= len(password) <= MAX_PASSWORD_LENGTH:
         raise InvalidInputError(
@@ -80,6 +98,8 @@ class AuthService:
         *,
         users: UserStore,
         refresh_tokens: RefreshTokenStore,
+        apple_identities: AppleIdentityStore,
+        apple: AppleVerifier,
         transaction: Transaction,
         hasher: PasswordHasher,
         access_tokens: AccessTokenCodec,
@@ -88,6 +108,8 @@ class AuthService:
     ) -> None:
         self._users = users
         self._refresh_tokens = refresh_tokens
+        self._apple_identities = apple_identities
+        self._apple = apple
         self._transaction = transaction
         self._hasher = hasher
         self._access_tokens = access_tokens
@@ -126,6 +148,51 @@ class AuthService:
         tokens = self._start_session(user.id)
         self._transaction.commit()
         return tokens
+
+    def sign_in_with_apple(
+        self, identity_token: str, nonce: str, full_name: str | None
+    ) -> TokenPair:
+        """Start a session for the Apple ID that ``identity_token`` proves, creating its
+        account on first sign-in (ADR 0019).
+
+        The account is found by Apple's user ID only, never by email, so an Apple ID whose
+        email matches a password account gets its own account. ``full_name`` is used only
+        when the account is created: Apple shares the name once, on the first sign-in.
+
+        Raises an ``InvalidAppleTokenError`` subclass, or ``AppleUnavailableError``.
+        """
+        try:
+            claims = self._apple.verify(identity_token, nonce, self._clock())
+        except InvalidAppleTokenError as error:
+            logger.warning("apple sign-in rejected: %s", type(error).__name__)
+            raise
+        identity = self._apple_identities.get_by_apple_user_id(claims.user_id)
+        if identity is None:
+            identity = self._create_apple_account(claims, full_name)
+        elif claims.email is not None:
+            # The user may have changed which email they share, or turned the relay off.
+            identity.email = claims.email
+            identity.is_private_email = claims.is_private_email
+        tokens = self._start_session(identity.user_id)
+        self._transaction.commit()
+        return tokens
+
+    def _create_apple_account(self, claims: AppleClaims, full_name: str | None) -> AppleIdentity:
+        user = User(id=uuid.uuid4(), display_name=_clean_name(full_name))
+        identity = AppleIdentity(
+            id=uuid.uuid4(),
+            user_id=user.id,
+            apple_user_id=claims.user_id,
+            email=claims.email,
+            is_private_email=claims.is_private_email,
+        )
+        if self._apple_identities.add_with_user(user, identity):
+            return identity
+        # A concurrent first sign-in with the same Apple ID created the account first.
+        winner = self._apple_identities.get_by_apple_user_id(claims.user_id)
+        if winner is None:  # pragma: no cover - the conflict means it exists
+            raise InvalidAppleTokenError()
+        return winner
 
     def refresh(self, refresh_token: str) -> TokenPair:
         """Rotate ``refresh_token`` for a new pair.

@@ -11,7 +11,11 @@ from app.schemas.common import RequestModel
 
 class UserResponse(BaseModel):
     id: uuid.UUID
-    email: str
+    email: str | None = Field(
+        description="The email this account signs in with by password. Null for an account "
+        "made with Sign in with Apple."
+    )
+    display_name: str | None = Field(description="The name Apple shared, if any.")
     timezone: str
     no_deadline_goal_share_bps: int
     created_at: datetime

@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import URL
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_clock, get_password_hasher
+from app.api.deps import get_apple_keys, get_clock, get_password_hasher
 from app.core.config import Settings, get_settings
 from app.core.security import PasswordHasher
 from app.db.session import get_session
@@ -239,7 +239,9 @@ def sign_up(client: TestClient) -> Callable[[str], dict[str, str]]:
 
 
 @pytest.fixture
-def client(db_session: Session, test_database_url: URL, clock: FakeClock) -> Iterator[TestClient]:
+def client(
+    db_session: Session, test_database_url: URL, clock: FakeClock, apple_keys: Any
+) -> Iterator[TestClient]:
     def session_per_request() -> Iterator[Session]:
         # Like the real get_session closing its session: whatever the service did
         # not commit is discarded when the request ends.
@@ -260,6 +262,7 @@ def client(db_session: Session, test_database_url: URL, clock: FakeClock) -> Ite
             get_settings: lambda: settings,
             get_password_hasher: lambda: hasher,
             get_clock: lambda: clock,
+            get_apple_keys: lambda: apple_keys,  # Apple's keys, mocked (tests/conftest.py)
         }
     )
     try:

@@ -5,7 +5,8 @@ The Expo + React Native + TypeScript app. Decisions are in
 [ADR 0013](../docs/adr/0013-mobile-sessions.md) (sign-in and sessions) and
 [ADR 0014](../docs/adr/0014-mobile-setup-screens.md) (setup screens, onboarding, navigation),
 [ADR 0015](../docs/adr/0015-payday-flow-and-idempotency.md) (the payday flow, repeat-safe actions)
-and [ADR 0017](../docs/adr/0017-undoing-a-payment.md) (undoing a payment).
+[ADR 0017](../docs/adr/0017-undoing-a-payment.md) (undoing a payment)
+and [ADR 0019](../docs/adr/0019-sign-in-with-apple.md) (Sign in with Apple, fresh-install sign-out).
 
 Requires Node 22.13+ or 24.3+ (`.nvmrc` pins 24) and, for the API types,
 [uv](https://docs.astral.sh/uv/). Run `uv sync --all-packages` once at the repo root.
@@ -33,12 +34,15 @@ src/app/             Routes. Expo Router makes every file here a route, so tests
     (tabs)/          Home, and Setup with its own stack of lists and forms
 src/api/client.ts    The only HTTP code: base URL, auth header, refresh-and-retry, timeout, ApiError
 src/api/session.ts   Tokens (refresh token in the Keychain, access token in memory) and refresh
+src/api/install.ts   The fresh-install marker: a reinstall must not wake up with the old session
 src/api/schema.d.ts  Generated from the backend. Never edit by hand.
 src/components/      Shared UI: form fields, date and select pickers, buttons, screen states
 src/features/<name>/ Each feature's query hooks (api.ts), form and screens
 src/lib/             Display and input conversion: formatCents, parseMoney, calendar dates
 src/test/            Test helpers: a fake backend (refresh rotation, in-memory resources), a
-                     fake Keychain, and helpers to launch the whole app or render hooks
+                     fake Keychain, and helpers to launch the whole app or render hooks.
+                     jest.setup.js mocks the file system (marker present, as after a first
+                     launch), Apple sign-in and crypto with the fakes here, for every test
 ```
 
 **Money and dates in forms.** Amounts are typed as text and turned into cents by
@@ -175,5 +179,28 @@ instantly from Metro.
 **It worked if** the sign-in screen appears. Create an account, and the home screen shows
 your email and, in development, the API address, status `ok` and an engine version.
 
-To sign out on the phone, use **Log out** on the home screen. Signing in survives closing
-the app, because the refresh token is kept in the iPhone's Keychain.
+To sign out on the phone, use **Log out** on the Setup tab. Signing in survives closing
+the app, because the refresh token is kept in the iPhone's Keychain. Deleting the app signs
+you out: the first launch after installing clears the Keychain (ADR 0019).
+
+## Sign in with Apple (Milestone 3E)
+
+Sign in with Apple needs a capability on the App ID and a build that includes it.
+`app.json` already sets `ios.usesAppleSignIn` and the `expo-apple-authentication` plugin.
+
+1. At [developer.apple.com](https://developer.apple.com/account/resources/identifiers/list),
+   open Certificates, Identifiers & Profiles > Identifiers > `com.theadedoyinmog.nextpay`.
+   Tick **Sign In with Apple**, leave it as a primary App ID, and Save. (EAS can turn it on
+   for you when it sees the entitlement, but checking it here first makes a failure obvious.)
+   No Services ID, key or return URL is needed: the app signs in natively, and the backend
+   only checks Apple's public keys.
+2. Make the iPhone's Apple ID ready: signed in to iCloud, with two-factor authentication on.
+3. Build, in `mobile/`: `npx eas-cli@latest build --profile development --platform ios`.
+   When EAS says the provisioning profile doesn't support the capability, let it regenerate
+   the profile.
+4. Install the new build. Expect to be signed out once: a build from before 3E never wrote
+   the install marker, so this launch looks like a fresh install.
+
+To be offered the name and email again, as on a first sign-in: on the iPhone, Settings >
+your name > Sign in with Apple > NextPay > Stop Using Apple ID. The backend still knows the
+Apple ID, so the same NextPay account opens.

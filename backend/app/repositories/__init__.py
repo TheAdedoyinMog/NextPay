@@ -1,5 +1,6 @@
 """Repositories: the only code that queries the database. One class per aggregate."""
 
+from app.repositories.apple_identities import AppleIdentityRepository
 from app.repositories.balances import BalanceSnapshotRepository
 from app.repositories.bills import BillRepository
 from app.repositories.goals import GoalRepository
@@ -14,6 +15,7 @@ from app.repositories.spending import DebtRepository, EssentialExpenseRepository
 from app.repositories.users import UserRepository
 
 __all__ = [
+    "AppleIdentityRepository",
     "BalanceSnapshotRepository",
     "BillPaymentRepository",
     "BillRepository",

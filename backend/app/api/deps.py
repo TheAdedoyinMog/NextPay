@@ -12,6 +12,7 @@ from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from app.core.apple import AppleKeySet, AppleKeySource, AppleTokenVerifier
 from app.core.clock import Clock, utc_now
 from app.core.config import Settings, get_settings
 from app.core.errors import AuthenticationError
@@ -19,6 +20,7 @@ from app.core.security import AccessTokenCodec, PasswordHasher
 from app.db.session import get_session
 from app.models import User
 from app.repositories import (
+    AppleIdentityRepository,
     BalanceSnapshotRepository,
     BillPaymentRepository,
     BillRepository,
@@ -58,15 +60,24 @@ def get_password_hasher() -> PasswordHasher:
     return PasswordHasher()
 
 
+@lru_cache
+def get_apple_keys() -> AppleKeySource:
+    """One key set per process, so Apple's keys are fetched once and cached (ADR 0019)."""
+    return AppleKeySet()
+
+
 def get_auth_service(
     session: Annotated[Session, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_settings)],
     hasher: Annotated[PasswordHasher, Depends(get_password_hasher)],
     clock: Annotated[Clock, Depends(get_clock)],
+    apple_keys: Annotated[AppleKeySource, Depends(get_apple_keys)],
 ) -> AuthService:
     return AuthService(
         users=UserRepository(session),
         refresh_tokens=RefreshTokenRepository(session),
+        apple_identities=AppleIdentityRepository(session),
+        apple=AppleTokenVerifier(apple_keys, settings.apple_bundle_id),
         transaction=session,
         hasher=hasher,
         access_tokens=AccessTokenCodec(

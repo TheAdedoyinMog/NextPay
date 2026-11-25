@@ -138,3 +138,48 @@ class RefreshTokenExpiredError(InvalidRefreshTokenError):
 
 class RefreshTokenReusedError(InvalidRefreshTokenError):
     """An already-rotated or revoked token came back: treat the session as stolen."""
+
+
+class InvalidAppleTokenError(AuthenticationError):
+    """Apple's identity token can't be trusted (ADR 0019). One public answer for every reason.
+
+    The subclasses exist for tests and logs, not for responses.
+    """
+
+    code = "invalid_apple_token"
+    message = "Sign in with Apple didn't work. Try again."
+
+
+class AppleTokenMalformedError(InvalidAppleTokenError):
+    pass
+
+
+class AppleTokenSignatureError(InvalidAppleTokenError):
+    """Not signed by any of Apple's current keys, or with an algorithm other than RS256."""
+
+
+class AppleTokenClaimsError(InvalidAppleTokenError):
+    """Wrong issuer or audience, or a required claim is missing."""
+
+
+class AppleTokenExpiredError(InvalidAppleTokenError):
+    pass
+
+
+class AppleNonceMismatchError(InvalidAppleTokenError):
+    """The token wasn't made for the nonce this request presented."""
+
+
+# --- Services we depend on ---
+
+
+class ServiceUnavailableError(DomainError):
+    code = "service_unavailable"
+    message = "A service NextPay depends on isn't answering. Try again in a moment."
+
+
+class AppleUnavailableError(ServiceUnavailableError):
+    """Apple's signing keys couldn't be fetched, so no identity token can be checked."""
+
+    code = "apple_unavailable"
+    message = "Apple isn't answering right now. Try again in a moment."

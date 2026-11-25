@@ -38,6 +38,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/apple": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign in with Apple
+         * @description Signs in the account for this Apple ID, creating it on the first sign-in. Accounts are matched by Apple ID only: an Apple ID whose email matches a password account still gets its own account. 503 means Apple's keys couldn't be fetched, so try again.
+         */
+        post: operations["sign_in_with_apple_auth_apple_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/refresh": {
         parameters: {
             query?: never;
@@ -657,6 +677,29 @@ export interface components {
             paid_ahead_on: string | null;
             /** Explanation */
             explanation: string;
+        };
+        /**
+         * AppleSignInRequest
+         * @description What the app got from Sign in with Apple, plus the nonce it made (ADR 0019).
+         */
+        AppleSignInRequest: {
+            /**
+             * Identity Token
+             * Format: password
+             * @description Apple's identity token.
+             */
+            identity_token: string;
+            /**
+             * Nonce
+             * Format: password
+             * @description The raw nonce. Apple was given its SHA-256, as lowercase hex.
+             */
+            nonce: string;
+            /**
+             * Full Name
+             * @description The name Apple shared. Apple sends it only on the first sign-in, and it is used only when that sign-in creates the account.
+             */
+            full_name?: string | null;
         };
         /** BalanceSnapshotListResponse */
         BalanceSnapshotListResponse: {
@@ -1513,8 +1556,16 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /** Email */
-            email: string;
+            /**
+             * Email
+             * @description The email this account signs in with by password. Null for an account made with Sign in with Apple.
+             */
+            email: string | null;
+            /**
+             * Display Name
+             * @description The name Apple shared, if any.
+             */
+            display_name: string | null;
             /** Timezone */
             timezone: string;
             /** No Deadline Goal Share Bps */
@@ -1623,6 +1674,57 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    sign_in_with_apple_auth_apple_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppleSignInRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

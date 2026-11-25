@@ -21,6 +21,7 @@ from app.core.errors import (
     EmailUnavailableError,
     InvalidInputError,
     NotFoundError,
+    ServiceUnavailableError,
 )
 from app.schemas.errors import ErrorBody, ErrorResponse
 
@@ -33,6 +34,7 @@ _STATUS_BY_ERROR: dict[type[DomainError], int] = {
     ConflictError: status.HTTP_409_CONFLICT,
     EmailUnavailableError: status.HTTP_409_CONFLICT,
     InvalidInputError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    ServiceUnavailableError: status.HTTP_503_SERVICE_UNAVAILABLE,
 }
 
 

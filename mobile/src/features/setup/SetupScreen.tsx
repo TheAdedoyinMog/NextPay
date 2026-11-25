@@ -69,7 +69,10 @@ function Account() {
   return (
     <>
       <SectionTitle>Account</SectionTitle>
-      {me.isSuccess ? <Text>Signed in as {me.data.email}</Text> : null}
+      {me.isSuccess ? (
+        // An account made with Apple has no email of its own (ADR 0019).
+        <Text>Signed in as {me.data.display_name ?? me.data.email ?? 'your Apple ID'}</Text>
+      ) : null}
       {me.isError ? (
         <ErrorState error={me.error} isRetrying={me.isFetching} onRetry={() => me.refetch()} />
       ) : null}

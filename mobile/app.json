@@ -11,6 +11,7 @@
     "ios": {
       "bundleIdentifier": "com.theadedoyinmog.nextpay",
       "supportsTablet": false,
+      "usesAppleSignIn": true,
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSLocalNetworkUsageDescription": "NextPay's development build connects to your computer over the local network."
@@ -26,7 +27,10 @@
           "imageWidth": 76
         }
       ],
-      ["expo-secure-store", { "faceIDPermission": false }]
+      ["expo-secure-store", { "faceIDPermission": false }],
+      "expo-apple-authentication",
+      "expo-font",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true,

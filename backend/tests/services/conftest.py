@@ -11,9 +11,10 @@ from typing import Any
 import argon2
 import pytest
 
+from app.core.apple import AppleTokenVerifier
 from app.core.errors import EmailUnavailableError, EmergencyGoalExistsError
 from app.core.security import AccessTokenCodec, PasswordHasher
-from app.models import PlanStatus, RefreshToken, User
+from app.models import AppleIdentity, PlanStatus, RefreshToken, User
 from app.services.auth import AuthService
 from app.services.balances import BalanceSnapshotService
 from app.services.bills import BillService
@@ -80,6 +81,30 @@ class FakeRefreshTokens:
         for token in live:
             token.revoked_at = at
         return len(live)
+
+
+class FakeAppleIdentities:
+    """Apple IDs by ``apple_user_id``. Adding one that exists returns False and adds
+    nothing, like the real repository after the database's unique constraint refuses it."""
+
+    def __init__(self, users: FakeUsers) -> None:
+        self.users = users
+        self.by_apple_user_id: dict[str, AppleIdentity] = {}
+        # Set to simulate a concurrent first sign-in that wins just before ours.
+        self.race_winner: AppleIdentity | None = None
+
+    def get_by_apple_user_id(self, apple_user_id: str) -> AppleIdentity | None:
+        return self.by_apple_user_id.get(apple_user_id)
+
+    def add_with_user(self, user: User, identity: AppleIdentity) -> bool:
+        if self.race_winner is not None:
+            self.by_apple_user_id[self.race_winner.apple_user_id] = self.race_winner
+            self.race_winner = None
+        if identity.apple_user_id in self.by_apple_user_id:
+            return False
+        self.users.by_id[user.id] = user
+        self.by_apple_user_id[identity.apple_user_id] = identity
+        return True
 
 
 class FakeOwnedStore:
@@ -324,9 +349,16 @@ def codec() -> AccessTokenCodec:
 
 
 @pytest.fixture
+def apple_identities(users: FakeUsers) -> FakeAppleIdentities:
+    return FakeAppleIdentities(users)
+
+
+@pytest.fixture
 def service(
     users: FakeUsers,
     refresh_tokens: FakeRefreshTokens,
+    apple_identities: FakeAppleIdentities,
+    apple_keys: Any,
     transaction: FakeTransaction,
     hasher: PasswordHasher,
     codec: AccessTokenCodec,
@@ -335,6 +367,8 @@ def service(
     return AuthService(
         users=users,
         refresh_tokens=refresh_tokens,
+        apple_identities=apple_identities,
+        apple=AppleTokenVerifier(apple_keys, "com.theadedoyinmog.nextpay"),
         transaction=transaction,
         hasher=hasher,
         access_tokens=codec,

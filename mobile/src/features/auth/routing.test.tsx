@@ -6,7 +6,9 @@ import { fireEvent, renderRouter, screen, waitFor } from 'expo-router/testing-li
 import * as SplashScreen from 'expo-splash-screen';
 
 import { session } from '@/api/session';
+import * as apple from '@/test/fakeAppleAuthentication';
 import { createFakeBackend, type FakeBackend } from '@/test/fakeBackend';
+import * as files from '@/test/fakeFileSystem';
 import * as keychain from '@/test/fakeSecureStore';
 
 jest.mock('@/api/config', () => ({ API_BASE_URL: 'http://api.test' }));
@@ -67,6 +69,8 @@ async function fillIn(email: string, password: string) {
 
 beforeEach(() => {
   keychain.reset();
+  files.reset();
+  apple.reset();
   jest.mocked(SplashScreen.hideAsync).mockClear();
   backend = createFakeBackend();
 });
@@ -126,6 +130,89 @@ describe('launch', () => {
     expect(await screen.findByText('Your session has ended. Sign in again.')).toBeTruthy();
     expect(screen).toHavePathname('/sign-in');
     expect(keychain.items.size).toBe(0);
+  });
+});
+
+describe('a reinstall (ADR 0019)', () => {
+  it('lands on sign-in, not the deleted install’s session', async () => {
+    rememberSession(); // iOS kept this in the Keychain when the app was deleted
+    files.uninstall();
+
+    await launch();
+
+    expect(await screen.findByRole('button', { name: 'Sign in' })).toBeTruthy();
+    expect(screen).toHavePathname('/sign-in');
+    expect(screen.queryByText('Your session has ended. Sign in again.')).toBeNull();
+    expect(keychain.items.size).toBe(0);
+    expect(backend.calls).toEqual([]);
+  });
+});
+
+describe('Sign in with Apple', () => {
+  const APPLE_ACCOUNT = `apple:${apple.appleId.user}`; // how the fake backend keys it
+
+  async function pressApple() {
+    await fireEvent.press(await screen.findByRole('button', { name: 'Sign in with Apple' }));
+  }
+
+  it('creates the account on first sign-in and goes to onboarding', async () => {
+    await launch();
+
+    await pressApple();
+
+    expect(await screen.findByText('When do you get paid?')).toBeTruthy();
+    expect(screen).toHavePathname('/onboarding');
+    expect(backend.appleAccounts.get(apple.appleId.user)).toEqual({
+      displayName: 'Ada Lovelace',
+    });
+  });
+
+  it('signs in to the same account again after logging out, showing the name', async () => {
+    seedIncome(APPLE_ACCOUNT);
+    await launch();
+    await pressApple();
+    await openSetupTab();
+    expect(await screen.findByText('Signed in as Ada Lovelace')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Log out' }));
+    await screen.findByRole('button', { name: 'Sign in' });
+
+    await pressApple(); // Apple no longer shares the name
+
+    expect(await screen.findByText('Acme payroll')).toBeTruthy();
+    await openSetupTab();
+    expect(await screen.findByText('Signed in as Ada Lovelace')).toBeTruthy();
+  });
+
+  it('stays on sign-in, without an error, when the user closes Apple’s sheet', async () => {
+    apple.next.outcome = 'cancel';
+    await launch();
+
+    await pressApple();
+
+    await waitFor(() => expect(apple.signInAsync).toHaveBeenCalled());
+    expect(screen).toHavePathname('/sign-in');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('says what went wrong when Apple fails', async () => {
+    apple.next.outcome = 'fail';
+    await launch();
+
+    await pressApple();
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      "Sign in with Apple didn't work. Check that you're signed in to iCloud in Settings, then try again.",
+    );
+    expect(screen).toHavePathname('/sign-in');
+  });
+
+  it('is not offered where Sign in with Apple is unavailable', async () => {
+    apple.isAvailableAsync.mockResolvedValueOnce(false);
+    await launch();
+
+    await screen.findByRole('button', { name: 'Sign in' });
+    await waitFor(() => expect(apple.isAvailableAsync).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: 'Sign in with Apple' })).toBeNull();
   });
 });
 

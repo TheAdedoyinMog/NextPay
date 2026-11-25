@@ -40,6 +40,8 @@ class Settings(DatabaseSettings):
     jwt_secret: SecretStr = Field(min_length=32)
     access_token_ttl_minutes: int = Field(default=15, ge=1)
     refresh_token_ttl_days: int = Field(default=30, ge=1)
+    # The audience Apple's identity tokens must carry: the iOS app's bundle ID (ADR 0019).
+    apple_bundle_id: str = Field(default="com.theadedoyinmog.nextpay", min_length=1)
 
 
 def _load[S: DatabaseSettings](settings_class: type[S]) -> S:

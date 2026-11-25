@@ -52,6 +52,7 @@ def test_register_signs_the_user_in(client: TestClient) -> None:
     assert set(me.json()) == {
         "id",
         "email",
+        "display_name",
         "timezone",
         "no_deadline_goal_share_bps",
         "created_at",

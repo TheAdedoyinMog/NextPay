@@ -68,6 +68,8 @@ and are skipped when it is unset. CI always runs them.
 
 With the API running, the interactive docs are at `http://localhost:8000/docs`. Sign in
 with `/auth/register` or `/auth/login`, then send the access token as a Bearer token.
+`/auth/apple` signs in with an Apple identity token; an Apple account is matched by Apple ID
+only, never merged with a password account by email (ADR 0019).
 
 | Resource | Routes |
 |---|---|

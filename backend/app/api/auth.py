@@ -1,4 +1,5 @@
-"""POST /auth/register, /auth/login, /auth/refresh, /auth/logout (ADR 0009)."""
+"""POST /auth/register, /auth/login, /auth/apple, /auth/refresh, /auth/logout
+(ADR 0009, ADR 0019)."""
 
 from typing import Any
 
@@ -7,6 +8,7 @@ from fastapi import APIRouter, status
 from app.api.deps import AuthServiceDep
 from app.api.mappers import to_token_response
 from app.schemas.auth import (
+    AppleSignInRequest,
     LoginRequest,
     LogoutRequest,
     RefreshRequest,
@@ -35,6 +37,27 @@ def register(body: RegisterRequest, auth: AuthServiceDep) -> TokenResponse:
 @router.post("/login", responses=_errors(401, 422), summary="Sign in")
 def login(body: LoginRequest, auth: AuthServiceDep) -> TokenResponse:
     return to_token_response(auth.login(body.email, body.password.get_secret_value()))
+
+
+@router.post(
+    "/apple",
+    responses=_errors(401, 422, 503),
+    summary="Sign in with Apple",
+    description=(
+        "Signs in the account for this Apple ID, creating it on the first sign-in. "
+        "Accounts are matched by Apple ID only: an Apple ID whose email matches a "
+        "password account still gets its own account. 503 means Apple's keys couldn't "
+        "be fetched, so try again."
+    ),
+)
+def sign_in_with_apple(body: AppleSignInRequest, auth: AuthServiceDep) -> TokenResponse:
+    return to_token_response(
+        auth.sign_in_with_apple(
+            body.identity_token.get_secret_value(),
+            body.nonce.get_secret_value(),
+            body.full_name,
+        )
+    )
 
 
 @router.post(

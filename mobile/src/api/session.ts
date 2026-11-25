@@ -1,7 +1,8 @@
 /**
  * The signed-in session: where tokens live and how they are refreshed (ADR 0013).
  *
- * - The refresh token is kept in the iOS Keychain (expo-secure-store), on this device only.
+ * - The refresh token is kept in the iOS Keychain (expo-secure-store), on this device only. A
+ *   fresh install clears it first, since the Keychain outlives a deleted app (ADR 0019).
  * - The access token is kept in memory only. After a launch the first request refreshes.
  * - "Signed in" means holding a refresh token the server hasn't rejected. Only a rejected
  *   refresh (a 401 from /auth/refresh) signs the user out. A network error or timeout never does.
@@ -12,6 +13,7 @@
 import * as SecureStore from 'expo-secure-store';
 
 import { api, ApiError, type AuthHandler, setAuthHandler, unwrap } from './client';
+import { isFreshInstall, markInstalled } from './install';
 import type { components } from './schema';
 
 type TokenResponse = components['schemas']['TokenResponse'];
@@ -51,13 +53,18 @@ class Session implements AuthHandler {
     return () => this.listeners.delete(listener);
   };
 
-  /** Reads the Keychain at launch. No network: an offline launch stays signed in. */
+  /**
+   * Reads the Keychain at launch. No network: an offline launch stays signed in. A fresh
+   * install starts signed out, whatever an earlier install left in the Keychain.
+   */
   async restore(): Promise<void> {
     const epoch = this.reset();
     this.setState(RESTORING);
     let stored: string | null = null;
     try {
-      stored = await SecureStore.getItemAsync(REFRESH_TOKEN_KEY, KEYCHAIN_OPTIONS);
+      stored = isFreshInstall()
+        ? await this.forgetEarlierInstall()
+        : await SecureStore.getItemAsync(REFRESH_TOKEN_KEY, KEYCHAIN_OPTIONS);
     } catch {
       stored = null; // an unreadable Keychain can't hold a session we could use
     }
@@ -68,7 +75,19 @@ class Session implements AuthHandler {
     this.setState(stored ? SIGNED_IN : { status: 'signedOut', reason: 'none' });
   }
 
-  /** Begins a session with the tokens from sign-up or log-in. */
+  /**
+   * iOS keeps Keychain items after the app is deleted, so a reinstalled app would wake up with
+   * the deleted app's session (ADR 0019). Clear first, then mark the install: if the app stops
+   * in between, the next launch just clears again. If clearing fails, nothing is marked and
+   * this launch is signed out anyway.
+   */
+  private async forgetEarlierInstall(): Promise<null> {
+    await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY, KEYCHAIN_OPTIONS);
+    markInstalled();
+    return null;
+  }
+
+  /** Begins a session with the tokens from sign-up, log-in, or Sign in with Apple. */
   async start(tokens: TokenResponse): Promise<void> {
     const epoch = this.reset();
     this.refreshToken = tokens.refresh_token;
